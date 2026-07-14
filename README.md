@@ -175,6 +175,6 @@ B.Tech Computer Science & Engineering, SRM Institute of Science and Technology (
 
 <div align="center">
 
-*Built in a single focused day as a demonstration of full-stack engineering fundamentals — authentication, data modeling, concurrency-safe operations, and production-minded design decisions.*
+*Built by a software engineer enthusiast as a demonstration of full-stack engineering fundamentals — authentication, data modeling, concurrency-safe operations, and production-minded design decisions.*
 
 </div>
