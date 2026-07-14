@@ -114,11 +114,6 @@ Every farmer-only and consumer-only action is protected by middleware at the API
 | GET | `/api/orders/received` | Farmer | View incoming orders |
 | PUT | `/api/orders/:id/status` | Farmer | Update order status |
 
----
-
-## 📸 Screenshots
-
-*(Add screenshots here: Login page, Farmer Dashboard with listings, Consumer Dashboard with trending badge, Payment modal, Order status flow)*
 
 ---
 
