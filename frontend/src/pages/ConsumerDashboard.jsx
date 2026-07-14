@@ -13,9 +13,9 @@ function ConsumerDashboard() {
   const [success, setSuccess] = useState('');
   const [quantities, setQuantities] = useState({});
 
-  const [paymentModal, setPaymentModal] = useState(null); // holds { produceId, quantity, totalPrice, name }
+  const [paymentModal, setPaymentModal] = useState(null);
   const [cardData, setCardData] = useState({ number: '', expiry: '', cvv: '', name: '' });
-  const [paymentStatus, setPaymentStatus] = useState('idle'); // idle | processing | success
+  const [paymentStatus, setPaymentStatus] = useState('idle');
   const [paymentError, setPaymentError] = useState('');
 
   const fetchProduce = async () => {
@@ -187,7 +187,7 @@ function ConsumerDashboard() {
                     </span>
                   )}
                   {item.imageUrl ? (
-                    <img src={'http://localhost:5000' + item.imageUrl} alt={item.name} className="w-full h-full object-cover" />
+                    <img src={item.imageUrl.startsWith('http') ? item.imageUrl : 'https://farmfresh-backend-j2n4.onrender.com' + item.imageUrl} alt={item.name} className="w-full h-full object-cover" />
                   ) : (
                     <span className="text-5xl">🥬</span>
                   )}

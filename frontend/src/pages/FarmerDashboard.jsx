@@ -190,7 +190,7 @@ function FarmerDashboard() {
                   <div key={item._id} className="bg-white rounded-xl shadow-sm border overflow-hidden">
                     <div className="h-32 bg-gradient-to-br from-green-100 to-emerald-50 flex items-center justify-center overflow-hidden">
                       {item.imageUrl ? (
-                        <img src={'http://localhost:5000' + item.imageUrl} alt={item.name} className="w-full h-full object-cover" />
+                        <img src={item.imageUrl.startsWith('http') ? item.imageUrl : 'https://farmfresh-backend-j2n4.onrender.com' + item.imageUrl} alt={item.name} className="w-full h-full object-cover" />
                       ) : (
                         <span className="text-4xl">🥬</span>
                       )}
