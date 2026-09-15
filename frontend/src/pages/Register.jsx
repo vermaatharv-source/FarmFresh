@@ -27,7 +27,15 @@ function Register() {
     try {
       const res = await API.post('/auth/register', formData);
       login(res.data.user, res.data.token);
-      navigate(res.data.user.role === 'farmer' ? '/farmer-dashboard' : '/consumer-dashboard');
+
+      // Route based on registered user role
+      if (res.data.user.role === 'fpo_admin' || res.data.user.role === 'fpo_staff') {
+        navigate('/fpo/dashboard');
+      } else if (res.data.user.role === 'farmer') {
+        navigate('/farmer-dashboard');
+      } else {
+        navigate('/consumer-dashboard');
+      }
     } catch (err) {
       setError(err.response?.data?.message || 'Something went wrong');
     } finally {
@@ -37,6 +45,7 @@ function Register() {
 
   return (
     <div className="min-h-screen flex">
+      {/* Left Decorative Banner */}
       <div className="hidden lg:flex lg:w-1/2 relative bg-gradient-to-br from-emerald-600 via-green-600 to-teal-600 overflow-hidden">
         <div className="absolute inset-0 opacity-20">
           <div className="absolute top-10 right-10 w-72 h-72 bg-yellow-300 rounded-full blur-3xl"></div>
@@ -46,12 +55,16 @@ function Register() {
           <div className="text-6xl mb-6">🌱</div>
           <h1 className="text-5xl font-extrabold leading-tight mb-4">Join FarmFresh</h1>
           <p className="text-xl text-green-50 max-w-md mb-10">
-            Whether you grow it or you cook with it, this is where farmers and consumers meet directly.
+            Whether you grow it, manage an FPO, or cook with it, this is where farmers and consumers meet directly.
           </p>
           <div className="space-y-4">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center text-lg">🚜</div>
               <p className="text-green-50">Farmers list produce in minutes</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center text-lg">🏢</div>
+              <p className="text-green-50">FPOs digitize intakes, grading & stock</p>
             </div>
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center text-lg">🛒</div>
@@ -61,15 +74,16 @@ function Register() {
         </div>
       </div>
 
+      {/* Right Form Container */}
       <div className="flex-1 flex items-center justify-center bg-gray-50 px-6 py-12">
-        <div className="w-full max-w-sm">
+        <div className="w-full max-w-md">
           <div className="lg:hidden text-center mb-8">
             <div className="text-4xl mb-2">🌱</div>
             <h1 className="text-2xl font-bold text-green-700">FarmFresh</h1>
           </div>
 
           <h2 className="text-2xl font-bold text-gray-900 mb-1">Create your account</h2>
-          <p className="text-gray-500 mb-6">Start buying or selling in minutes</p>
+          <p className="text-gray-500 mb-6">Start buying, selling, or managing produce in minutes</p>
 
           {error && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-2 rounded-lg mb-4 text-sm">
@@ -80,20 +94,27 @@ function Register() {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">I am a</label>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-2">
                 <button
                   type="button"
                   onClick={() => setFormData({ ...formData, role: 'consumer' })}
-                  className={formData.role === 'consumer' ? 'py-2.5 rounded-lg font-medium border-2 border-green-600 bg-green-50 text-green-700 transition' : 'py-2.5 rounded-lg font-medium border-2 border-gray-200 text-gray-500 transition'}
+                  className={formData.role === 'consumer' ? 'py-2 rounded-lg font-medium text-xs sm:text-sm border-2 border-green-600 bg-green-50 text-green-700 transition' : 'py-2 rounded-lg font-medium text-xs sm:text-sm border-2 border-gray-200 text-gray-500 transition'}
                 >
                   Consumer
                 </button>
                 <button
                   type="button"
                   onClick={() => setFormData({ ...formData, role: 'farmer' })}
-                  className={formData.role === 'farmer' ? 'py-2.5 rounded-lg font-medium border-2 border-green-600 bg-green-50 text-green-700 transition' : 'py-2.5 rounded-lg font-medium border-2 border-gray-200 text-gray-500 transition'}
+                  className={formData.role === 'farmer' ? 'py-2 rounded-lg font-medium text-xs sm:text-sm border-2 border-green-600 bg-green-50 text-green-700 transition' : 'py-2 rounded-lg font-medium text-xs sm:text-sm border-2 border-gray-200 text-gray-500 transition'}
                 >
                   Farmer
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFormData({ ...formData, role: 'fpo_admin' })}
+                  className={formData.role === 'fpo_admin' ? 'py-2 rounded-lg font-medium text-xs sm:text-sm border-2 border-green-600 bg-green-50 text-green-700 transition' : 'py-2 rounded-lg font-medium text-xs sm:text-sm border-2 border-gray-200 text-gray-500 transition'}
+                >
+                  FPO Admin
                 </button>
               </div>
             </div>
@@ -106,7 +127,7 @@ function Register() {
                 value={formData.name}
                 onChange={handleChange}
                 required
-                className="w-full border border-gray-300 rounded-lg px-4 py-2.5 outline-none transition"
+                className="w-full border border-gray-300 rounded-lg px-4 py-2.5 outline-none transition focus:ring-2 focus:ring-green-500"
                 placeholder="Ramesh Kumar"
               />
             </div>
@@ -118,7 +139,7 @@ function Register() {
                 value={formData.email}
                 onChange={handleChange}
                 required
-                className="w-full border border-gray-300 rounded-lg px-4 py-2.5 outline-none transition"
+                className="w-full border border-gray-300 rounded-lg px-4 py-2.5 outline-none transition focus:ring-2 focus:ring-green-500"
                 placeholder="you@example.com"
               />
             </div>
@@ -130,7 +151,7 @@ function Register() {
                 value={formData.password}
                 onChange={handleChange}
                 required
-                className="w-full border border-gray-300 rounded-lg px-4 py-2.5 outline-none transition"
+                className="w-full border border-gray-300 rounded-lg px-4 py-2.5 outline-none transition focus:ring-2 focus:ring-green-500"
                 placeholder="Enter password"
               />
             </div>
@@ -142,7 +163,7 @@ function Register() {
                 value={formData.location}
                 onChange={handleChange}
                 required
-                className="w-full border border-gray-300 rounded-lg px-4 py-2.5 outline-none transition"
+                className="w-full border border-gray-300 rounded-lg px-4 py-2.5 outline-none transition focus:ring-2 focus:ring-green-500"
                 placeholder="Delhi"
               />
             </div>
@@ -150,7 +171,7 @@ function Register() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-green-600 text-white py-2.5 rounded-lg font-semibold hover:bg-green-700 transition disabled:opacity-60"
+              className="w-full bg-green-600 text-white py-2.5 rounded-lg font-semibold hover:bg-green-700 transition disabled:opacity-60 mt-2"
             >
               {loading ? 'Creating account...' : 'Create Account'}
             </button>

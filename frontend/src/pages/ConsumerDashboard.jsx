@@ -13,6 +13,51 @@ function ConsumerDashboard() {
   const [success, setSuccess] = useState('');
   const [quantities, setQuantities] = useState({});
 
+  // NEW: FPO Marketplace — listings published from FPO Inventory, separate
+  // from the farmer-direct "produce" model above.
+  const [fpoListings, setFpoListings] = useState([]);
+  const [fpoOrders, setFpoOrders] = useState([]);
+  const [fpoQuantities, setFpoQuantities] = useState({});
+
+  const fetchFpoListings = async () => {
+    try {
+      const res = await API.get('/listings/public');
+      setFpoListings(res.data);
+    } catch (err) {
+      console.error('Failed to load FPO listings', err);
+    }
+  };
+
+  const fetchFpoOrders = async () => {
+    try {
+      const res = await API.get('/fpo-orders/mine');
+      setFpoOrders(res.data);
+    } catch (err) {
+      console.error('Failed to load FPO orders', err);
+    }
+  };
+
+  const handlePlaceFpoOrder = async (listing) => {
+    const qty = Number(fpoQuantities[listing._id]);
+    if (!qty || qty <= 0) {
+      setError('Enter a valid quantity');
+      return;
+    }
+    if (qty < listing.minOrderQtyKg) {
+      setError(`Minimum order quantity is ${listing.minOrderQtyKg}kg`);
+      return;
+    }
+    try {
+      await API.post('/fpo-orders', { listingId: listing._id, quantityKg: qty });
+      setSuccess('Order placed with FPO!');
+      setFpoQuantities({ ...fpoQuantities, [listing._id]: '' });
+      fetchFpoListings();
+      fetchFpoOrders();
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to place order');
+    }
+  };
+
   const [paymentModal, setPaymentModal] = useState(null);
   const [cardData, setCardData] = useState({ number: '', expiry: '', cvv: '', name: '' });
   const [paymentStatus, setPaymentStatus] = useState('idle');
@@ -39,6 +84,8 @@ function ConsumerDashboard() {
   useEffect(() => {
     fetchProduce();
     fetchOrders();
+    fetchFpoListings();
+    fetchFpoOrders();
   }, []);
 
   const handleQuantityChange = (produceId, value) => {
@@ -173,6 +220,13 @@ function ConsumerDashboard() {
           <button onClick={() => setTab('orders')} className={tab === 'orders' ? 'px-5 py-2 rounded-md text-sm font-medium bg-green-600 text-white' : 'px-5 py-2 rounded-md text-sm font-medium text-gray-600'}>
             My Orders {orders.length > 0 && '(' + orders.length + ')'}
           </button>
+          {/* NEW: FPO Marketplace tabs */}
+          <button onClick={() => setTab('fpoMarket')} className={tab === 'fpoMarket' ? 'px-5 py-2 rounded-md text-sm font-medium bg-green-600 text-white' : 'px-5 py-2 rounded-md text-sm font-medium text-gray-600'}>
+            FPO Marketplace
+          </button>
+          <button onClick={() => setTab('fpoOrders')} className={tab === 'fpoOrders' ? 'px-5 py-2 rounded-md text-sm font-medium bg-green-600 text-white' : 'px-5 py-2 rounded-md text-sm font-medium text-gray-600'}>
+            FPO Orders {fpoOrders.length > 0 && '(' + fpoOrders.length + ')'}
+          </button>
         </div>
 
         {tab === 'browse' && (
@@ -234,6 +288,82 @@ function ConsumerDashboard() {
                   <p className="text-sm text-gray-500">From: {order.farmerId?.name} ({order.farmerId?.location})</p>
                   <p className="text-sm text-gray-500">Total: ₹{order.totalPrice}</p>
                   <span className={'inline-block mt-2 text-xs px-2 py-1 rounded-full font-medium ' + statusColor[order.status]}>
+                    {order.status}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* NEW: FPO Marketplace — listings sourced from graded FPO Inventory */}
+        {tab === 'fpoMarket' && (
+          <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-5">
+            {fpoListings.length === 0 && <p className="text-gray-500 text-sm">No FPO listings available right now.</p>}
+            {fpoListings.map((item) => (
+              <div key={item._id} className="bg-white rounded-xl shadow-sm border overflow-hidden hover:shadow-md transition">
+                <div className="h-36 bg-gradient-to-br from-emerald-100 to-teal-50 flex items-center justify-center overflow-hidden relative">
+                  <span className="absolute top-2 left-2 bg-emerald-700 text-white text-xs font-semibold px-2 py-1 rounded-full z-10">
+                    Grade {item.grade}
+                  </span>
+                  {item.images?.[0] ? (
+                    <img
+                      src={item.images[0].startsWith('http') ? item.images[0] : `${(import.meta.env.VITE_API_URL || 'http://localhost:5000/api').replace('/api', '')}/${item.images[0].replace(/^.*uploads/, 'uploads')}`}
+                      alt={item.produceType}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <span className="text-5xl">🌾</span>
+                  )}
+                </div>
+                <div className="p-4">
+                  <h3 className="font-semibold text-gray-900">{item.produceType}</h3>
+                  <p className="text-xs text-gray-500">{item.fpo?.name}</p>
+                  <p className="text-green-700 font-bold mt-1">₹{item.pricePerKg}<span className="text-xs font-normal text-gray-500">/kg</span></p>
+                  <p className="text-xs text-gray-500 mb-1">{item.availableQuantityKg}kg available · min {item.minOrderQtyKg}kg</p>
+                  {item.description && <p className="text-xs text-gray-400 mb-2">{item.description}</p>}
+
+                  <div className="flex gap-2">
+                    <input
+                      type="number"
+                      placeholder="kg"
+                      value={fpoQuantities[item._id] || ''}
+                      onChange={(e) => setFpoQuantities({ ...fpoQuantities, [item._id]: e.target.value })}
+                      className="w-16 border border-gray-300 rounded-lg px-2 py-1.5 text-sm outline-none focus:border-green-500"
+                      min={item.minOrderQtyKg}
+                      max={item.availableQuantityKg}
+                    />
+                    <button
+                      onClick={() => handlePlaceFpoOrder(item)}
+                      disabled={item.availableQuantityKg === 0}
+                      className="flex-1 bg-emerald-700 text-white text-sm py-1.5 rounded-lg hover:bg-emerald-800 disabled:bg-gray-300 transition"
+                    >
+                      {item.availableQuantityKg === 0 ? 'Out of Stock' : 'Order from FPO'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* NEW: FPO Orders — order lifecycle (Placed/Packed/Dispatched/Delivered/Cancelled) */}
+        {tab === 'fpoOrders' && (
+          <div className="bg-white rounded-xl shadow-sm border p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-4">Orders with FPOs</h2>
+            <div className="space-y-3">
+              {fpoOrders.length === 0 && <p className="text-gray-400 text-sm">No FPO orders yet.</p>}
+              {fpoOrders.map((order) => (
+                <div key={order._id} className="border rounded-lg p-4">
+                  <p className="font-semibold text-gray-900">{order.listing?.produceType} (Grade {order.listing?.grade}) — {order.quantityKg}kg</p>
+                  <p className="text-sm text-gray-500">From: {order.fpo?.name}</p>
+                  <p className="text-sm text-gray-500">Total: ₹{order.totalPrice}</p>
+                  <span className={`inline-block mt-2 text-xs px-2 py-1 rounded-full font-medium ${
+                    order.status === 'Delivered' ? 'bg-green-100 text-green-800' :
+                    order.status === 'Cancelled' ? 'bg-red-100 text-red-800' :
+                    order.status === 'Dispatched' ? 'bg-blue-100 text-blue-800' :
+                    'bg-yellow-100 text-yellow-800'
+                  }`}>
                     {order.status}
                   </span>
                 </div>

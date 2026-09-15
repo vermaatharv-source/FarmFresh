@@ -20,8 +20,19 @@ function Login() {
     setLoading(true);
     try {
       const res = await API.post('/auth/login', formData);
+      
+      // Save user and token to Context/LocalStorage
       login(res.data.user, res.data.token);
-      navigate(res.data.user.role === 'farmer' ? '/farmer-dashboard' : '/consumer-dashboard');
+
+      // Route based on role
+      const role = res.data.user.role;
+      if (role === 'farmer') {
+        navigate('/farmer-dashboard');
+      } else if (role === 'fpo_admin' || role === 'fpo_staff') {
+        navigate('/fpo/dashboard');
+      } else {
+        navigate('/consumer-dashboard');
+      }
     } catch (err) {
       setError(err.response?.data?.message || 'Something went wrong');
     } finally {

@@ -2,6 +2,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const Fpo = require('../models/Fpo'); // 1. Require Fpo model
 
 const router = express.Router();
 
@@ -22,8 +23,33 @@ router.post('/register', async (req, res) => {
       email,
       password: hashedPassword,
       role,
-      location
+      location,
     });
+
+    // 2. Automatically create FPO profile document if registering as FPO Admin
+    // FIX: wrapped in its own try/catch. If this fails for any reason, we no
+    // longer leave the caller with a confusing 500 and an orphaned User doc —
+    // we roll the User back and return a clear error instead.
+    if (user.role === 'fpo_admin') {
+      try {
+        await Fpo.create({
+          name: `${user.name}'s FPO`,
+          registrationNumber: `REG-${Date.now()}`,
+          contactDetails: {
+            email: user.email,
+            phone: '',
+            address: '',
+          },
+          adminUser: user._id,
+        });
+      } catch (fpoErr) {
+        await User.findByIdAndDelete(user._id);
+        return res.status(500).json({
+          message: 'Failed to create FPO profile during registration. Please try again.',
+          error: fpoErr.message,
+        });
+      }
+    }
 
     const token = jwt.sign(
       { id: user._id, role: user.role },
@@ -33,7 +59,7 @@ router.post('/register', async (req, res) => {
 
     res.status(201).json({
       token,
-      user: { id: user._id, name: user.name, email: user.email, role: user.role, location: user.location }
+      user: { id: user._id, name: user.name, email: user.email, role: user.role, location: user.location },
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -63,7 +89,7 @@ router.post('/login', async (req, res) => {
 
     res.json({
       token,
-      user: { id: user._id, name: user.name, email: user.email, role: user.role, location: user.location }
+      user: { id: user._id, name: user.name, email: user.email, role: user.role, location: user.location },
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
