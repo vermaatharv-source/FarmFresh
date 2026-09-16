@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const Fpo = require('../models/Fpo');
 const User = require('../models/User');
 const Farmer = require('../models/Farmer');
@@ -680,8 +681,8 @@ exports.getBatchTraceability = async (req, res) => {
       .populate('farmer', 'name address village phone')
       .populate('fpo', 'name contactDetails registrationNumber');
 
-    // Fallback: try MongoDB _id
-    if (!batch) {
+    // Fallback: try MongoDB _id if it is a valid ObjectId
+    if (!batch && mongoose.Types.ObjectId.isValid(batchId)) {
       batch = await Batch.findById(batchId)
         .populate('farmer', 'name address village phone')
         .populate('fpo', 'name contactDetails registrationNumber');

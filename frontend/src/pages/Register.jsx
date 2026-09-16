@@ -7,6 +7,7 @@ function Register() {
   const [formData, setFormData] = useState({
     name: '',
     email: '',
+    phone: '',
     password: '',
     role: 'consumer',
     location: ''
@@ -141,6 +142,17 @@ function Register() {
                 required
                 className="w-full border border-gray-300 rounded-lg px-4 py-2.5 outline-none transition focus:ring-2 focus:ring-green-500"
                 placeholder="you@example.com"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Phone Number (Optional)</label>
+              <input
+                type="tel"
+                name="phone"
+                value={formData.phone}
+                onChange={handleChange}
+                className="w-full border border-gray-300 rounded-lg px-4 py-2.5 outline-none transition focus:ring-2 focus:ring-green-500"
+                placeholder="+91 98765 43210"
               />
             </div>
             <div>

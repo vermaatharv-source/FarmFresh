@@ -3,7 +3,7 @@ const Listing = require('../models/Listing');
 const Inventory = require('../models/Inventory');
 const StockMovement = require('../models/StockMovement');
 const FpoOrder = require('../models/FpoOrder');
-const { notify } = require('../utils/notify');
+const { notify, notifyUser } = require('../utils/notify');
 
 const getFpoId = async (userId) => {
   const f = await Fpo.findOne({ $or: [{ adminUser: userId }, { staff: userId }] });
@@ -77,6 +77,13 @@ exports.createOrder = async (req, res) => {
       { orderId: order._id }
     );
 
+    await notifyUser(
+      req.user._id || req.user.id,
+      'OrderAccepted',
+      `Your order for ${qty}kg ${listing.produceType} (Grade ${listing.grade}) has been placed!`,
+      { orderId: order._id }
+    ).catch(() => {});
+
     res.status(201).json(order);
   } catch (e) {
     res.status(500).json({ message: e.message });
@@ -87,7 +94,7 @@ exports.createOrder = async (req, res) => {
 exports.getMyOrders = async (req, res) => {
   try {
     const orders = await FpoOrder.find({ consumer: req.user._id || req.user.id })
-      .populate('listing', 'produceType grade pricePerKg images')
+      .populate('listing', 'produceType grade pricePerKg images sourceBatch sourceIntakeId')
       .populate('fpo', 'name')
       .sort({ createdAt: -1 });
     res.json(orders);
@@ -139,6 +146,33 @@ exports.updateOrderStatus = async (req, res) => {
 
     order.status = status;
     await order.save();
+
+    // Notify consumer about order lifecycle change
+    const orderShortId = order._id.toString().slice(-6).toUpperCase();
+    let consumerMsg = '';
+    let notificationType = 'System';
+
+    if (status === 'Accepted') {
+      notificationType = 'OrderAccepted';
+      consumerMsg = `Your order #${orderShortId} has been confirmed by the FPO warehouse!`;
+    } else if (status === 'Packed') {
+      notificationType = 'OrderPacked';
+      consumerMsg = `Order #${orderShortId} has passed quality grading and is packed in cold chain.`;
+    } else if (status === 'Dispatched') {
+      notificationType = 'OrderDispatched';
+      consumerMsg = `Order #${orderShortId} is out for delivery! Estimated slot: ${order.deliverySlot || 'Standard Delivery'}.`;
+    } else if (status === 'Delivered') {
+      notificationType = 'OrderDelivered';
+      consumerMsg = `Order #${orderShortId} has been delivered safely! Please rate your produce freshness.`;
+    } else if (status === 'Rejected') {
+      notificationType = 'OrderCancelled';
+      consumerMsg = `Order #${orderShortId} could not be fulfilled: ${order.rejectionReason || 'Produce unavailable'}.`;
+    }
+
+    if (consumerMsg) {
+      await notifyUser(order.consumer, notificationType, consumerMsg, { orderId: order._id });
+    }
+
     res.json(order);
   } catch (e) {
     res.status(500).json({ message: e.message });
@@ -182,8 +216,109 @@ exports.processRefund = async (req, res) => {
     order.refundTransactionId = req.body.refundTransactionId || `REF-${Date.now()}`;
     order.status = 'Refunded';
     await order.save();
+
+    await notifyUser(
+      order.consumer,
+      'RefundProcessed',
+      `Refund of ₹${order.totalPrice} for order #${order._id.toString().slice(-6).toUpperCase()} has been processed. Transaction Ref: ${order.refundTransactionId}`,
+      { orderId: order._id }
+    );
+
     res.json({ message: 'Refund marked as processed.', order });
   } catch (e) {
     res.status(500).json({ message: e.message });
   }
 };
+
+// Consumer-initiated order cancellation (eligible when Placed or Accepted)
+exports.consumerCancelOrder = async (req, res) => {
+  try {
+    const userId = req.user._id || req.user.id;
+    const order = await FpoOrder.findOne({ _id: req.params.id, consumer: userId });
+    if (!order) return res.status(404).json({ message: 'Order not found.' });
+
+    if (!['Placed', 'Accepted'].includes(order.status)) {
+      return res.status(400).json({ 
+        message: `Order cannot be cancelled at stage '${order.status}'. Please contact customer support.` 
+      });
+    }
+
+    // Restore stock to listing
+    const listing = await Listing.findById(order.listing);
+    if (listing) {
+      listing.availableQuantityKg = (listing.availableQuantityKg || 0) + order.quantityKg;
+      await listing.save();
+
+      // Adjust inventory soldQuantity
+      const inv = await Inventory.findOne({
+        fpo: order.fpo,
+        produceType: listing.produceType,
+        grade: order.gradeOrdered || listing.grade,
+      });
+      if (inv) {
+        inv.soldQuantity = Math.max(0, (inv.soldQuantity || 0) - order.quantityKg);
+        await inv.save();
+      }
+
+      // Record stock movement
+      await StockMovement.create({
+        fpo: order.fpo,
+        produceType: listing.produceType,
+        grade: order.gradeOrdered || listing.grade,
+        type: 'Adjustment',
+        quantityKg: order.quantityKg,
+        listing: listing._id,
+        order: order._id,
+        notes: `Consumer cancelled order: ${req.body.reason || 'No reason provided'}`
+      });
+    }
+
+    order.status = 'Cancelled';
+    order.cancelReason = req.body.reason || 'Cancelled by buyer';
+    order.refundStatus = (order.paymentMethod !== 'COD') ? 'Pending' : 'NotRequired';
+    await order.save();
+
+    await notify(
+      order.fpo,
+      'OrderCancelled',
+      `Order #${order._id.toString().slice(-6)} was cancelled by buyer. Reason: ${order.cancelReason}`,
+      { orderId: order._id }
+    ).catch(() => {});
+
+    res.json({ message: 'Order cancelled successfully.', order });
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+};
+
+// Consumer-initiated return/refund request (eligible when Delivered)
+exports.consumerRequestReturn = async (req, res) => {
+  try {
+    const userId = req.user._id || req.user.id;
+    const order = await FpoOrder.findOne({ _id: req.params.id, consumer: userId });
+    if (!order) return res.status(404).json({ message: 'Order not found.' });
+
+    if (order.status !== 'Delivered') {
+      return res.status(400).json({ message: 'Return requests can only be made for delivered orders.' });
+    }
+
+    if (['Pending', 'Processed'].includes(order.refundStatus)) {
+      return res.status(400).json({ message: 'A return/refund request is already pending or processed.' });
+    }
+
+    order.returnReason = req.body.reason || 'Produce return / refund requested';
+    order.refundStatus = 'Pending';
+    await order.save();
+
+    await notify(
+      order.fpo,
+      'ReturnRequested',
+      `Return request for Order #${order._id.toString().slice(-6)}. Reason: ${order.returnReason}`,
+      { orderId: order._id }
+    ).catch(() => {});
+
+    res.json({ message: 'Return request submitted successfully.', order });
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+};

@@ -10,4 +10,13 @@ const notify = async (fpoId, type, message, meta = {}) => {
   }
 };
 
-module.exports = { notify };
+const notifyUser = async (userId, type, message, meta = {}) => {
+  try {
+    if (!userId) return;
+    await Notification.create({ user: userId, type, message, meta });
+  } catch (err) {
+    console.error('Failed to create user notification:', err.message);
+  }
+};
+
+module.exports = { notify, notifyUser };

@@ -25,6 +25,8 @@ const fpoOrderRoutes = require('./routes/fpoOrderRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const reportRoutes = require('./routes/reportRoutes');
 const gradePriceRoutes = require('./routes/gradePriceRoutes');
+const reviewRoutes = require('./routes/reviewRoutes');
+const subscriptionRoutes = require('./routes/subscriptionRoutes');
 
 app.use(cors());
 app.use(express.json());
@@ -40,6 +42,8 @@ app.use('/api/fpo-orders', fpoOrderRoutes); // NEW: consumer orders against FPO 
 app.use('/api/notifications', notificationRoutes); // NEW
 app.use('/api/reports', reportRoutes); // NEW: sales/farmer-performance/monthly/settlement/payout CSV
 app.use('/api/grade-prices', gradePriceRoutes); // NEW: per-crop grade-based pricing configs used by batch grading
+app.use('/api/reviews', reviewRoutes); // Product Reviews & Ratings
+app.use('/api/subscriptions', subscriptionRoutes); // Recurring Subscriptions (Subscribe & Save)
 
 // Health check endpoint
 app.get('/', (req, res) => {

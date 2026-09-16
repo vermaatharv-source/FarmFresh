@@ -1,3 +1,9 @@
 const express=require('express');const router=express.Router();const c=require('../controllers/fpoOrderController');const {protect}=require('../middleware/authMiddleware');const {authorizeRoles}=require('../middleware/roleMiddleware');
 router.post('/',protect,authorizeRoles('consumer'),c.createOrder);router.get('/mine',protect,authorizeRoles('consumer'),c.getMyOrders);
-router.get('/fpo',protect,authorizeRoles('fpo_admin','fpo_staff'),c.getFpoOrders);router.patch('/:id/status',protect,authorizeRoles('fpo_admin','fpo_staff'),c.updateOrderStatus);router.patch('/:id/cancel',protect,authorizeRoles('fpo_admin','fpo_staff'),c.cancelOrder);router.patch('/:id/refund',protect,authorizeRoles('fpo_admin'),c.processRefund);module.exports=router;
+router.get('/fpo',protect,authorizeRoles('fpo_admin','fpo_staff'),c.getFpoOrders);
+router.patch('/:id/status',protect,authorizeRoles('fpo_admin','fpo_staff'),c.updateOrderStatus);
+router.patch('/:id/cancel',protect,authorizeRoles('fpo_admin','fpo_staff'),c.cancelOrder);
+router.patch('/:id/refund',protect,authorizeRoles('fpo_admin'),c.processRefund);
+router.put('/:id/consumer-cancel',protect,authorizeRoles('consumer'),c.consumerCancelOrder);
+router.post('/:id/consumer-return',protect,authorizeRoles('consumer'),c.consumerRequestReturn);
+module.exports=router;

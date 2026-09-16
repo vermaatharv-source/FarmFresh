@@ -4,6 +4,19 @@ const fpoOrderSchema=new mongoose.Schema({
   consumer:{type:mongoose.Schema.Types.ObjectId,ref:'User',required:true},quantityKg:{type:Number,required:true,min:0.001},totalPrice:{type:Number,required:true,min:0},
   buyerType:{type:String,enum:['INDIVIDUAL','RESTAURANT','KIRANA','WHOLESALER'],default:'INDIVIDUAL'},gradeOrdered:{type:String,enum:['A','B','C','Custom']},
   status:{type:String,enum:['Placed','Accepted','Rejected','Packed','Dispatched','Delivered','Cancelled','Refunded'],default:'Placed'},
-  cancelReason:{type:String,default:''},rejectionReason:{type:String,default:''},refundStatus:{type:String,enum:['NotRequired','Pending','Processed','Failed'],default:'NotRequired'},refundTransactionId:{type:String}
+  cancelReason:{type:String,default:''},rejectionReason:{type:String,default:''},returnReason:{type:String,default:''},refundStatus:{type:String,enum:['NotRequired','Pending','Processed','Failed'],default:'NotRequired'},refundTransactionId:{type:String},
+  deliveryAddress: {
+    fullName: { type: String },
+    phone: { type: String },
+    streetAddress: { type: String },
+    landmark: { type: String, default: '' },
+    city: { type: String },
+    state: { type: String },
+    pincode: { type: String }
+  },
+  deliverySlot: { type: String, default: 'Standard Delivery' },
+  paymentMethod: { type: String, default: 'CARD' },
+  discountAmount: { type: Number, default: 0 },
+  couponCode: { type: String, default: '' }
 },{timestamps:true});
 module.exports=mongoose.model('FpoOrder',fpoOrderSchema);
