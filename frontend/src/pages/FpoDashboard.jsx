@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import API from '../api/axios';
+import FpoCompletionPanel from '../components/FpoCompletionPanel';
 
 export default function FpoDashboard() {
   const [activeTab, setActiveTab] = useState('analytics');
@@ -44,7 +45,8 @@ export default function FpoDashboard() {
 
   // NEW: Listings (linked to Inventory)
   const [listings, setListings] = useState([]);
-  const [listingForm, setListingForm] = useState({ produceType: '', grade: 'A', pricePerKg: '', availableQuantityKg: '', minOrderQtyKg: 1, description: '' });
+  const [listingForm, setListingForm] = useState({ produceType: '', grade: 'A', pricePerKg: '', availableQuantityKg: '', minOrderQtyKg: 1, description: '', sourceBatch: '' });
+  const [listingImages, setListingImages] = useState([]);
 
   // NEW: FPO Orders (consumer orders against listings)
   const [fpoOrders, setFpoOrders] = useState([]);
@@ -176,13 +178,12 @@ export default function FpoDashboard() {
   const handleCreateListing = async (e) => {
     e.preventDefault();
     try {
-      await API.post('/listings', {
-        ...listingForm,
-        pricePerKg: Number(listingForm.pricePerKg),
-        availableQuantityKg: Number(listingForm.availableQuantityKg),
-        minOrderQtyKg: Number(listingForm.minOrderQtyKg) || 1,
-      });
-      setListingForm({ produceType: '', grade: 'A', pricePerKg: '', availableQuantityKg: '', minOrderQtyKg: 1, description: '' });
+      const form = new FormData();
+      Object.entries({ ...listingForm, pricePerKg: Number(listingForm.pricePerKg), availableQuantityKg: Number(listingForm.availableQuantityKg), minOrderQtyKg: Number(listingForm.minOrderQtyKg) || 1 }).forEach(([k,v]) => { if (v !== '' && v !== undefined) form.append(k, v); });
+      listingImages.forEach((file) => form.append('images', file));
+      await API.post('/listings', form, { headers: { 'Content-Type': 'multipart/form-data' } });
+      setListingForm({ produceType: '', grade: 'A', pricePerKg: '', availableQuantityKg: '', minOrderQtyKg: 1, description: '', sourceBatch: '' });
+      setListingImages([]);
       fetchListings();
       fetchInventory();
     } catch (err) {
@@ -572,7 +573,7 @@ export default function FpoDashboard() {
           <span>🌱</span> FarmFresh FPO
         </div>
         <nav className="flex-1 p-4 space-y-2">
-          {['analytics', 'farmers', 'intake', 'inventory', 'listings', 'orders', 'payouts', 'reports', 'settings'].map((tab) => (
+          {['analytics', 'farmers', 'intake', 'inventory', 'listings', 'orders', 'payouts', 'reports', 'settings', 'completion'].map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -621,6 +622,10 @@ export default function FpoDashboard() {
             </div>
           )}
         </div>
+
+        {activeTab === 'completion' && (
+          <FpoCompletionPanel profile={fpoProfile} farmers={farmers} batches={batches} onRefresh={fetchProfile} />
+        )}
 
         {/* Tab 1: Analytics */}
         {activeTab === 'analytics' && (
@@ -1131,6 +1136,13 @@ export default function FpoDashboard() {
                 onChange={(e) => setListingForm({ ...listingForm, description: e.target.value })}
                 className="p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
               />
+              <select value={listingForm.sourceBatch} onChange={(e) => setListingForm({ ...listingForm, sourceBatch: e.target.value })} className="p-2.5 border rounded-lg">
+                <option value="">Source batch (optional)</option>
+                {batches.filter((b) => b.grading?.status === 'Approved' && b.produceType === listingForm.produceType).map((b) => (
+                  <option key={b._id} value={b._id}>{b.batchId}</option>
+                ))}
+              </select>
+              <input type="file" accept="image/*" multiple onChange={(e) => setListingImages(Array.from(e.target.files || []).slice(0, 5))} className="p-2.5 border rounded-lg" />
               <button className="col-span-2 bg-emerald-600 text-white py-2.5 rounded-lg font-medium hover:bg-emerald-700 transition">
                 Create Listing (reserves stock from Inventory)
               </button>
@@ -1213,14 +1225,26 @@ export default function FpoDashboard() {
                               className="text-xs border rounded p-1"
                             >
                               <option value="" disabled>Advance status...</option>
-                              {o.status === 'Placed' && <option value="Packed">Mark Packed</option>}
+                              {o.status === 'Placed' && <option value="Accepted">Accept Order</option>}
+                              {o.status === 'Placed' && <option value="Rejected">Reject Order</option>}
+                              {o.status === 'Accepted' && <option value="Packed">Mark Packed</option>}
                               {o.status === 'Packed' && <option value="Dispatched">Mark Dispatched</option>}
                               {o.status === 'Dispatched' && <option value="Delivered">Mark Delivered</option>}
                             </select>
                             <button onClick={() => handleCancelOrder(o._id)} className="text-xs text-red-600 hover:underline">
                               Cancel Order
                             </button>
+                            {(o.status === 'Cancelled' || o.status === 'Rejected') && o.refundStatus !== 'Processed' && (
+                              <button onClick={async () => { try { await API.patch(`/fpo-orders/${o._id}/refund`, { refundTransactionId: prompt('Refund transaction ID') || undefined }); fetchFpoOrders(); } catch (err) { alert(err.response?.data?.message || 'Refund failed'); } }} className="text-xs text-blue-600 hover:underline">
+                                Mark Refund Processed
+                              </button>
+                            )}
                           </div>
+                        )}
+                        {(o.status === 'Cancelled' || o.status === 'Rejected') && o.refundStatus !== 'Processed' && (
+                          <button onClick={async () => { try { await API.patch(`/fpo-orders/${o._id}/refund`, { refundTransactionId: prompt('Refund transaction ID') || undefined }); fetchFpoOrders(); } catch (err) { alert(err.response?.data?.message || 'Refund failed'); } }} className="text-xs text-blue-600 hover:underline mt-1">
+                            Mark Refund Processed
+                          </button>
                         )}
                       </td>
                     </tr>

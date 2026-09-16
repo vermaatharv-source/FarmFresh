@@ -62,6 +62,20 @@ router.get('/', async (req, res) => {
   }
 });
 
+// Farmer requests approval from an FPO for a direct listing
+router.patch('/:id/request-fpo-approval', protect, farmerOnly, async (req, res) => {
+  try {
+    const Produce = require('../models/Produce');
+    const produce = await Produce.findOne({ _id: req.params.id, farmerId: req.user.id });
+    if (!produce) return res.status(404).json({ message: 'Listing not found' });
+    if (!req.body.fpoId) return res.status(400).json({ message: 'fpoId is required' });
+    produce.requestedFpo = req.body.fpoId;
+    produce.fpoApprovalStatus = 'Pending';
+    await produce.save();
+    res.json({ message: 'FPO approval requested', produce });
+  } catch (err) { res.status(500).json({ message: err.message }); }
+});
+
 // Get logged-in farmer's own listings
 router.get('/mine', protect, farmerOnly, async (req, res) => {
   try {

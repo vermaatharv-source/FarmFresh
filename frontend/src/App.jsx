@@ -5,6 +5,7 @@ import FarmerDashboard from './pages/FarmerDashboard';
 import ConsumerDashboard from './pages/ConsumerDashboard';
 import FpoDashboard from './pages/FpoDashboard';
 import TraceabilityPassport from './pages/TraceabilityPassport';
+import FpoListingDetail from './pages/FpoListingDetail';
 import ProtectedRoute from './components/ProtectedRoute';
 
 function App() {
@@ -31,7 +32,10 @@ function App() {
         }
       />
 
-      {/* FPO Portal & Public Traceability Routes */}
+      {/* Product Detail Page */}
+      <Route path="/listing/:id" element={<FpoListingDetail />} />
+
+      {/* FPO Portal */}
       <Route
         path="/fpo/dashboard"
         element={
@@ -40,7 +44,8 @@ function App() {
           </ProtectedRoute>
         }
       />
-      {/* Public — no login required, this is the QR-scan-facing passport page */}
+
+      {/* Public Traceability */}
       <Route path="/trace/:batchId" element={<TraceabilityPassport />} />
     </Routes>
   );

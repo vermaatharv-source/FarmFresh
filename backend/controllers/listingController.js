@@ -2,155 +2,196 @@ const Fpo = require('../models/Fpo');
 const Listing = require('../models/Listing');
 const Inventory = require('../models/Inventory');
 const StockMovement = require('../models/StockMovement');
+const Batch = require('../models/Batch');
 
-const getFpoIdForUser = async (userId) => {
-  if (!userId) return null;
-  const fpo = await Fpo.findOne({ $or: [{ adminUser: userId }, { staff: userId }] });
-  return fpo ? fpo._id : null;
+const getFpoId = async (userId) => {
+  const f = await Fpo.findOne({ $or: [{ adminUser: userId }, { staff: userId }] });
+  return f ? f._id : null;
 };
 
-// 1. Create a listing — reserves the quantity out of Inventory so it can't
-// be double-counted as "available" elsewhere.
+// Create listing (FPO staff)
 exports.createListing = async (req, res) => {
   try {
-    const userId = req.user._id || req.user.id;
-    const fpoId = await getFpoIdForUser(userId);
-    if (!fpoId) return res.status(400).json({ message: 'Associated FPO profile not found.' });
+    const f = await getFpoId(req.user._id || req.user.id);
+    if (!f) return res.status(400).json({ message: 'Associated FPO profile not found.' });
 
-    const { produceType, grade, pricePerKg, availableQuantityKg, minOrderQtyKg, description } = req.body;
+    const { produceType, grade, pricePerKg, availableQuantityKg, minOrderQtyKg, description, sourceBatch } = req.body;
     const qty = Number(availableQuantityKg);
 
-    const inventory = await Inventory.findOne({ fpo: fpoId, produceType, grade });
-    const freeStock = inventory ? inventory.totalQuantity - inventory.reservedQuantity - inventory.soldQuantity : 0;
-    if (!inventory || freeStock < qty) {
-      return res.status(400).json({ message: `Not enough free stock. Available: ${freeStock}kg, requested: ${qty}kg.` });
+    if (!(qty > 0) || !(Number(pricePerKg) >= 0)) {
+      return res.status(400).json({ message: 'Valid quantity and price are required.' });
     }
 
-    const images = req.files ? req.files.map((f) => f.path) : [];
+    const inv = await Inventory.findOne({ fpo: f, produceType, grade });
+    const free = inv ? inv.totalQuantity - inv.reservedQuantity - inv.soldQuantity : 0;
+    if (!inv || free < qty) {
+      return res.status(400).json({ message: `Not enough free stock. Available: ${free}kg.` });
+    }
+
+    if (sourceBatch) {
+      const b = await Batch.findOne({ _id: sourceBatch, fpo: f });
+      if (!b) return res.status(400).json({ message: 'Invalid source batch.' });
+    }
+
+    const images = req.files?.map((x) => x.path) || [];
 
     const listing = await Listing.create({
-      fpo: fpoId,
+      fpo: f,
       produceType,
       grade,
-      pricePerKg,
+      pricePerKg: Number(pricePerKg),
       availableQuantityKg: qty,
-      minOrderQtyKg: minOrderQtyKg || 1,
+      minOrderQtyKg: Number(minOrderQtyKg) || 1,
       description: description || '',
       images,
+      sourceBatch: sourceBatch || undefined,
+      sourceIntakeId: sourceBatch || undefined,
       status: 'Draft',
     });
 
-    inventory.reservedQuantity += qty;
-    await inventory.save();
+    inv.reservedQuantity += qty;
+    await inv.save();
+
+    if (sourceBatch) {
+      await Batch.findByIdAndUpdate(sourceBatch, { $addToSet: { listedAsProductIds: listing._id } });
+    }
 
     await StockMovement.create({
-      fpo: fpoId, produceType, grade, type: 'Reserved', quantityKg: qty, listing: listing._id,
-      note: 'Reserved for new listing',
+      fpo: f,
+      produceType,
+      grade,
+      type: 'Reserved',
+      quantityKg: qty,
+      listing: listing._id,
+      batch: sourceBatch || undefined,
+      note: 'Reserved for listing',
     });
 
     res.status(201).json({ message: 'Listing created', listing });
-  } catch (error) {
-    res.status(500).json({ message: 'Server Error', error: error.message });
+  } catch (e) {
+    res.status(500).json({ message: e.message });
   }
 };
 
-// 2. Get this FPO's own listings (all statuses)
+// FPO's own listings
 exports.getMyListings = async (req, res) => {
   try {
-    const userId = req.user._id || req.user.id;
-    const fpoId = await getFpoIdForUser(userId);
-    if (!fpoId) return res.json([]);
-
-    const listings = await Listing.find({ fpo: fpoId }).sort({ createdAt: -1 });
-    res.json(listings);
-  } catch (error) {
-    res.status(500).json({ message: 'Server Error', error: error.message });
+    const f = await getFpoId(req.user._id || req.user.id);
+    if (!f) return res.json([]);
+    const rows = await Listing.find({ fpo: f })
+      .populate('sourceBatch', 'batchId produceType rawQuantityKg grading')
+      .sort({ createdAt: -1 });
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({ message: e.message });
   }
 };
 
-// 3. Public: browse all Published listings (consumer-facing marketplace)
+// PUBLIC listings with filters
 exports.getPublicListings = async (req, res) => {
   try {
-    const { produceType } = req.query;
     const filter = { status: 'Published', availableQuantityKg: { $gt: 0 } };
-    if (produceType) filter.produceType = produceType;
 
-    const listings = await Listing.find(filter).populate('fpo', 'name contactDetails');
-    res.json(listings);
-  } catch (error) {
-    res.status(500).json({ message: 'Server Error', error: error.message });
+    if (req.query.grade) filter.grade = req.query.grade.toUpperCase();
+    if (req.query.produceType) {
+      filter.produceType = { $regex: req.query.produceType, $options: 'i' };
+    }
+    if (req.query.search) {
+      filter.$or = [
+        { produceType: { $regex: req.query.search, $options: 'i' } },
+        { description: { $regex: req.query.search, $options: 'i' } },
+      ];
+    }
+    if (req.query.minPrice) filter.pricePerKg = { ...filter.pricePerKg, $gte: Number(req.query.minPrice) };
+    if (req.query.maxPrice) filter.pricePerKg = { ...filter.pricePerKg, $lte: Number(req.query.maxPrice) };
+
+    let query = Listing.find(filter).populate('fpo', 'name contactDetails');
+
+    const sortBy = req.query.sort || 'newest';
+    if (sortBy === 'price_asc') query = query.sort({ pricePerKg: 1 });
+    else if (sortBy === 'price_desc') query = query.sort({ pricePerKg: -1 });
+    else if (sortBy === 'qty_desc') query = query.sort({ availableQuantityKg: -1 });
+    else query = query.sort({ createdAt: -1 });
+
+    const rows = await query.lean();
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({ message: e.message });
   }
 };
 
-// 4. Publish / Pause a listing
+// GET single public listing with full details
+exports.getPublicListingById = async (req, res) => {
+  try {
+    const listing = await Listing.findOne({
+      _id: req.params.id,
+      status: 'Published',
+    })
+      .populate('fpo', 'name contactDetails registrationNumber district state')
+      .populate({
+        path: 'sourceBatch',
+        select: 'batchId produceType rawQuantityKg harvestDate collectionDate grading pricingSnapshot qrCodeUrl',
+        populate: { path: 'farmer', select: 'name village phone' },
+      });
+
+    if (!listing) {
+      return res.status(404).json({ message: 'Listing not found or not published.' });
+    }
+
+    res.json(listing);
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+};
+
 exports.setListingStatus = async (req, res) => {
   try {
-    const userId = req.user._id || req.user.id;
-    const fpoId = await getFpoIdForUser(userId);
-    if (!fpoId) return res.status(400).json({ message: 'Associated FPO profile not found.' });
+    const f = await getFpoId(req.user._id || req.user.id);
+    const listing = await Listing.findOne({ _id: req.params.id, fpo: f });
+    if (!listing) return res.status(404).json({ message: 'Listing not found.' });
 
-    const { status } = req.body; // 'Published' | 'Paused' | 'Draft'
-    if (!['Published', 'Paused', 'Draft'].includes(status)) {
+    const { status } = req.body;
+    if (!['Draft', 'Published', 'Paused'].includes(status)) {
       return res.status(400).json({ message: 'Invalid status.' });
     }
-
-    const listing = await Listing.findOne({ _id: req.params.id, fpo: fpoId });
-    if (!listing) return res.status(404).json({ message: 'Listing not found.' });
-
     listing.status = status;
     await listing.save();
-    res.json({ message: `Listing set to ${status}`, listing });
-  } catch (error) {
-    res.status(500).json({ message: 'Server Error', error: error.message });
+    res.json(listing);
+  } catch (e) {
+    res.status(500).json({ message: e.message });
   }
 };
 
-// 5. Edit price / quantity / description on a listing
 exports.updateListing = async (req, res) => {
   try {
-    const userId = req.user._id || req.user.id;
-    const fpoId = await getFpoIdForUser(userId);
-    if (!fpoId) return res.status(400).json({ message: 'Associated FPO profile not found.' });
-
-    const listing = await Listing.findOne({ _id: req.params.id, fpo: fpoId });
+    const f = await getFpoId(req.user._id || req.user.id);
+    const listing = await Listing.findOne({ _id: req.params.id, fpo: f });
     if (!listing) return res.status(404).json({ message: 'Listing not found.' });
 
-    const { pricePerKg, minOrderQtyKg, description } = req.body;
-    if (pricePerKg !== undefined) listing.pricePerKg = pricePerKg;
-    if (minOrderQtyKg !== undefined) listing.minOrderQtyKg = minOrderQtyKg;
+    const { pricePerKg, availableQuantityKg, minOrderQtyKg, description } = req.body;
+    if (pricePerKg !== undefined) listing.pricePerKg = Number(pricePerKg);
+    if (availableQuantityKg !== undefined) listing.availableQuantityKg = Number(availableQuantityKg);
+    if (minOrderQtyKg !== undefined) listing.minOrderQtyKg = Number(minOrderQtyKg);
     if (description !== undefined) listing.description = description;
 
+    if (req.files?.length) {
+      listing.images = req.files.map((x) => x.path);
+    }
+
     await listing.save();
-    res.json({ message: 'Listing updated', listing });
-  } catch (error) {
-    res.status(500).json({ message: 'Server Error', error: error.message });
+    res.json(listing);
+  } catch (e) {
+    res.status(500).json({ message: e.message });
   }
 };
 
-// 6. Delete a listing — releases the reserved stock back to Inventory
 exports.deleteListing = async (req, res) => {
   try {
-    const userId = req.user._id || req.user.id;
-    const fpoId = await getFpoIdForUser(userId);
-    if (!fpoId) return res.status(400).json({ message: 'Associated FPO profile not found.' });
-
-    const listing = await Listing.findOne({ _id: req.params.id, fpo: fpoId });
+    const f = await getFpoId(req.user._id || req.user.id);
+    const listing = await Listing.findOneAndDelete({ _id: req.params.id, fpo: f });
     if (!listing) return res.status(404).json({ message: 'Listing not found.' });
-
-    const inventory = await Inventory.findOne({ fpo: fpoId, produceType: listing.produceType, grade: listing.grade });
-    if (inventory) {
-      inventory.reservedQuantity = Math.max(0, inventory.reservedQuantity - listing.availableQuantityKg);
-      await inventory.save();
-      await StockMovement.create({
-        fpo: fpoId, produceType: listing.produceType, grade: listing.grade,
-        type: 'Released', quantityKg: listing.availableQuantityKg, listing: listing._id,
-        note: 'Listing deleted, stock released',
-      });
-    }
-
-    await Listing.findByIdAndDelete(listing._id);
-    res.json({ message: 'Listing deleted and stock released back to inventory.' });
-  } catch (error) {
-    res.status(500).json({ message: 'Server Error', error: error.message });
+    res.json({ message: 'Listing deleted' });
+  } catch (e) {
+    res.status(500).json({ message: e.message });
   }
 };
