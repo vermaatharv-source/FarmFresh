@@ -11,6 +11,7 @@ const fs = require('fs');
 const csv = require('csv-parser');
 const QRCode = require('qrcode');
 const { notify } = require('../utils/notify');
+const { validateFpoDetails } = require('../utils/Fpovalidation');
 const GradePriceConfig = require('../models/GradePriceConfig');
 const FpoOrder = require('../models/FpoOrder');
 const Listing = require('../models/Listing');
@@ -28,23 +29,27 @@ const getFpoIdForUser = async (userId) => {
 exports.registerFpo = async (req, res) => {
   try {
     const userId = req.user._id || req.user.id;
-    const { name, registrationNumber, contactDetails } = req.body;
 
-    // FIX: prevent an admin from ending up with more than one FPO profile.
+    const { error, top, contact } = validateFpoDetails(req.body, { requireCore: true });
+    if (error) {
+      return res.status(400).json({ message: error });
+    }
+
+    // Prevent an admin from ending up with more than one FPO profile.
     const existingForAdmin = await Fpo.findOne({ adminUser: userId });
     if (existingForAdmin) {
       return res.status(400).json({ message: 'You already have an FPO profile registered.' });
     }
 
-    const existingFpo = await Fpo.findOne({ registrationNumber });
+    const existingFpo = await Fpo.findOne({ registrationNumber: top.registrationNumber });
     if (existingFpo) {
       return res.status(400).json({ message: 'FPO with this registration number already exists.' });
     }
 
+    const adminUser = await User.findById(userId).select('email');
     const fpo = await Fpo.create({
-      name,
-      registrationNumber,
-      contactDetails,
+      ...top,
+      contactDetails: { ...contact, email: contact.email || adminUser?.email },
       adminUser: userId,
     });
 
@@ -740,7 +745,37 @@ exports.getBatchTraceability = async (req, res) => {
 
 
 // Complete missing FPO management operations.
-exports.updateProfile = async (req,res)=>{ try { const uid=req.user._id||req.user.id; const f=await Fpo.findOne({adminUser:uid}); if(!f)return res.status(404).json({message:'FPO profile not found.'}); const {name,registrationNumber,cbboName,managerName,managerContact,creditLineAvailable,contactDetails}=req.body; if(registrationNumber&&registrationNumber!==f.registrationNumber&&await Fpo.exists({registrationNumber,_id:{$ne:f._id}}))return res.status(400).json({message:'Registration number already exists.'}); Object.assign(f,{name:name??f.name,registrationNumber:registrationNumber??f.registrationNumber,cbboName:cbboName??f.cbboName,managerName:managerName??f.managerName,managerContact:managerContact??f.managerContact,creditLineAvailable:creditLineAvailable??f.creditLineAvailable}); if(contactDetails) f.contactDetails={...f.contactDetails.toObject(),...contactDetails}; await f.save(); res.json(await Fpo.findById(f._id).populate('adminUser staff','name email role location')); } catch(e){res.status(400).json({message:e.message});} };
+exports.updateProfile = async (req, res) => {
+  try {
+    const uid = req.user._id || req.user.id;
+    const f = await Fpo.findOne({ adminUser: uid });
+    if (!f) return res.status(404).json({ message: 'FPO profile not found.' });
+
+    const { error, top, contact } = validateFpoDetails(req.body);
+    if (error) return res.status(400).json({ message: error });
+
+    if (
+      top.registrationNumber &&
+      top.registrationNumber !== f.registrationNumber &&
+      (await Fpo.exists({ registrationNumber: top.registrationNumber, _id: { $ne: f._id } }))
+    ) {
+      return res.status(400).json({ message: 'Registration number already exists.' });
+    }
+
+    Object.assign(f, top);
+    if (req.body.creditLineAvailable !== undefined) {
+      f.creditLineAvailable = Number(req.body.creditLineAvailable) || 0;
+    }
+    if (Object.keys(contact).length) {
+      f.contactDetails = { ...f.contactDetails.toObject(), ...contact };
+    }
+
+    await f.save();
+    res.json(await Fpo.findById(f._id).populate('adminUser staff', 'name email role location'));
+  } catch (e) {
+    res.status(400).json({ message: e.message });
+  }
+};
 exports.updateStaff = async(req,res)=>{try{const f=await Fpo.findOne({adminUser:req.user._id||req.user.id});if(!f||!f.staff.some(x=>x.toString()===req.params.staffId))return res.status(404).json({message:'Staff member not found.'});const u=await User.findById(req.params.staffId);if(!u)return res.status(404).json({message:'User not found.'});if(req.body.name!==undefined)u.name=req.body.name;if(req.body.location!==undefined)u.location=req.body.location;if(req.body.password)u.password=await bcrypt.hash(req.body.password,10);await u.save();res.json(u);}catch(e){res.status(400).json({message:e.message});}};
 exports.removeStaff = async(req,res)=>{try{const f=await Fpo.findOne({adminUser:req.user._id||req.user.id});if(!f)return res.status(404).json({message:'FPO not found.'});const id=req.params.staffId;if(!f.staff.some(x=>x.toString()===id))return res.status(404).json({message:'Staff member not found.'});f.staff=f.staff.filter(x=>x.toString()!==id);await f.save();await User.findOneAndUpdate({_id:id,role:'fpo_staff'},{$set:{role:'consumer'}});res.json({message:'Staff deactivated and removed from FPO.'});}catch(e){res.status(500).json({message:e.message});}};
 exports.verifyKyc = async(req,res)=>{try{if(req.user.role!=='admin')return res.status(403).json({message:'Only authority admin can verify KYC.'});const {status,reason}=req.body;if(!['Pending','Verified','Rejected'].includes(status))return res.status(400).json({message:'Invalid KYC status.'});const f=await Fpo.findByIdAndUpdate(req.params.fpoId,{kycStatus:status,kycRejectionReason:status==='Rejected'?(reason||''):''},{new:true});if(!f)return res.status(404).json({message:'FPO not found.'});res.json(f);}catch(e){res.status(500).json({message:e.message});}};
@@ -748,3 +783,14 @@ exports.importFarmersExcel = async(req,res)=>{try{const fpoId=await getFpoIdForU
 exports.getWeeklyReport = async(req,res)=>{try{const fpoId=await getFpoIdForUser(req.user._id||req.user.id);if(!fpoId)return res.json([]);const days=Number(req.query.days)||56;const start=new Date(Date.now()-days*86400000);const batches=await Batch.find({fpo:fpoId,createdAt:{$gte:start}});const orders=await FpoOrder.find({fpo:fpoId,createdAt:{$gte:start},status:{$nin:['Cancelled','Rejected']}});const key=d=>{const x=new Date(d);x.setHours(0,0,0,0);const day=x.getDay();const diff=x.getDate()-day+(day===0?-6:1);x.setDate(diff);return x.toISOString().slice(0,10)};const m={};for(const b of batches){const k=key(b.createdAt);m[k]??={week:k,intakeKg:0,revenue:0};m[k].intakeKg+=b.rawQuantityKg}for(const o of orders){const k=key(o.createdAt);m[k]??={week:k,intakeKg:0,revenue:0};m[k].revenue+=o.totalPrice}res.json(Object.values(m).sort((a,b)=>a.week.localeCompare(b.week)));}catch(e){res.status(500).json({message:e.message});}};
 exports.getFarmerSales = async(req,res)=>{try{const fpoId=await getFpoIdForUser(req.user._id||req.user.id);const farmer=await Farmer.findOne({_id:req.params.farmerId,fpo:fpoId});if(!farmer)return res.status(404).json({message:'Farmer not found.'});const batches=await Batch.find({fpo:fpoId,farmer:farmer._id});const batchIds=batches.map(b=>b._id);const listings=await Listing.find({fpo:fpoId,sourceBatch:{$in:batchIds}});const listingIds=listings.map(l=>l._id);const orders=await FpoOrder.find({fpo:fpoId,listing:{$in:listingIds},status:{$nin:['Cancelled','Rejected']}}).populate('listing','produceType grade pricePerKg');res.json({farmer,batches,listings,orders,totalSoldKg:orders.reduce((s,o)=>s+o.quantityKg,0),salesRevenue:orders.reduce((s,o)=>s+o.totalPrice,0)});}catch(e){res.status(500).json({message:e.message});}};
 exports.completePayout = async(req,res)=>{try{const fpoId=await getFpoIdForUser(req.user._id||req.user.id);const payout=await Payout.findOne({_id:req.params.payoutId,fpo:fpoId});if(!payout)return res.status(404).json({message:'Payout not found.'});if(payout.status==='Completed')return res.status(400).json({message:'Payout already completed.'});payout.status='Completed';payout.transactionId=req.body.transactionId||payout.transactionId||`TXN-${Date.now()}`;payout.paymentDate=new Date();payout.paidAt=new Date();await payout.save();if(payout.batch){const b=await Batch.findOne({_id:payout.batch,fpo:fpoId});if(b){b.payoutStatus='PAID';b.paidAt=new Date();await b.save();}}await Farmer.findByIdAndUpdate(payout.farmer,{$inc:{totalEarnedLifetime:payout.amount}}).catch(()=>{});res.json({message:'Payout completed.',payout});}catch(e){res.status(500).json({message:e.message});}};
+exports.listFposForAdmin = async (req, res) => {
+  try {
+    const filter = req.query.status ? { kycStatus: req.query.status } : {};
+    const fpos = await Fpo.find(filter)
+      .select('name registrationNumber registrationType kycStatus kycRejectionReason kycDocuments shareholderFarmerCount contactDetails.district contactDetails.state createdAt')
+      .sort({ createdAt: -1 });
+    res.json(fpos);
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+};

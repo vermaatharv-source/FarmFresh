@@ -12,6 +12,17 @@ function Register() {
     role: 'consumer',
     location: ''
   });
+  const [fpoDetails, setFpoDetails] = useState({
+    name: '',
+    registrationType: '',
+    registrationNumber: '',
+    pan: '',
+    gstin: '',
+    state: '',
+    district: '',
+    pincode: '',
+    address: ''
+  });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
@@ -21,12 +32,17 @@ function Register() {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
+  const handleFpoChange = (e) => {
+    setFpoDetails({ ...fpoDetails, [e.target.name]: e.target.value });
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
     setLoading(true);
     try {
-      const res = await API.post('/auth/register', formData);
+      const payload = formData.role === 'fpo_admin' ? { ...formData, fpoDetails } : formData;
+      const res = await API.post('/auth/register', payload);
       login(res.data.user, res.data.token);
 
       // Route based on registered user role
@@ -154,6 +170,131 @@ function Register() {
                 placeholder="Enter password"
               />
             </div>
+            {formData.role === 'fpo_admin' && (
+              <div className="border border-green-200 bg-green-50/40 rounded-xl p-4 space-y-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-800">Organisation details</h3>
+                  <p className="text-xs text-gray-500">
+                    Provide your FPO's official registration details. These are reviewed during KYC verification.
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">FPO legal name *</label>
+                  <input
+                    type="text"
+                    name="name"
+                    value={fpoDetails.name}
+                    onChange={handleFpoChange}
+                    required
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-green-500"
+                    placeholder="As per registration certificate"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Registration type *</label>
+                    <select
+                      name="registrationType"
+                      value={fpoDetails.registrationType}
+                      onChange={handleFpoChange}
+                      required
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-green-500 bg-white"
+                    >
+                      <option value="">Select</option>
+                      <option value="Producer Company">Producer Company</option>
+                      <option value="Cooperative Society">Cooperative Society</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Registration number *</label>
+                    <input
+                      type="text"
+                      name="registrationNumber"
+                      value={fpoDetails.registrationNumber}
+                      onChange={handleFpoChange}
+                      required
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-green-500"
+                      placeholder="CIN / society reg. no."
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">PAN</label>
+                    <input
+                      type="text"
+                      name="pan"
+                      value={fpoDetails.pan}
+                      onChange={handleFpoChange}
+                      maxLength={10}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-green-500 uppercase"
+                      placeholder="ABCDE1234F"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">GSTIN</label>
+                    <input
+                      type="text"
+                      name="gstin"
+                      value={fpoDetails.gstin}
+                      onChange={handleFpoChange}
+                      maxLength={15}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-green-500 uppercase"
+                      placeholder="15-character GSTIN"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">State *</label>
+                    <input
+                      type="text"
+                      name="state"
+                      value={fpoDetails.state}
+                      onChange={handleFpoChange}
+                      required
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-green-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">District *</label>
+                    <input
+                      type="text"
+                      name="district"
+                      value={fpoDetails.district}
+                      onChange={handleFpoChange}
+                      required
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-green-500"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="col-span-2">
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Registered address</label>
+                    <input
+                      type="text"
+                      name="address"
+                      value={fpoDetails.address}
+                      onChange={handleFpoChange}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-green-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Pincode</label>
+                    <input
+                      type="text"
+                      name="pincode"
+                      value={fpoDetails.pincode}
+                      onChange={handleFpoChange}
+                      maxLength={6}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-green-500"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Location</label>
               <input

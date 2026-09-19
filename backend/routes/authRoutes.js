@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const Fpo = require('../models/Fpo'); // 1. Require Fpo model
 const { protect } = require('../middleware/authMiddleware');
+const { validateFpoDetails } = require('../utils/Fpovalidation');
 
 const router = express.Router();
 
@@ -17,6 +18,28 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({
         message: 'Farmer accounts are no longer supported. Farmers are onboarded and managed by their FPO.',
       });
+    }
+
+    // Only consumers and FPO admins can self-register. FPO staff are created by
+    // their FPO admin, and authority admins are created with scripts/createAdmin.js.
+    const signupRole = String(role || '').toLowerCase().replace(/\s+/g, '_');
+    if (!['consumer', 'fpo_admin'].includes(signupRole)) {
+      return res.status(400).json({ message: 'Invalid account type.' });
+    }
+
+    // FPO admins must provide real registration details up front.
+    let fpoTop = null;
+    let fpoContact = null;
+    if (signupRole === 'fpo_admin') {
+      const { error, top, contact } = validateFpoDetails(req.body.fpoDetails, { requireCore: true });
+      if (error) {
+        return res.status(400).json({ message: error });
+      }
+      if (await Fpo.exists({ registrationNumber: top.registrationNumber })) {
+        return res.status(400).json({ message: 'An FPO with this registration number already exists.' });
+      }
+      fpoTop = top;
+      fpoContact = contact;
     }
 
     const existingUser = await User.findOne({ email });
@@ -39,12 +62,11 @@ router.post('/register', async (req, res) => {
     if (user.role === 'fpo_admin') {
       try {
         await Fpo.create({
-          name: `${user.name}'s FPO`,
-          registrationNumber: `REG-${Date.now()}`,
+          ...fpoTop,
           contactDetails: {
-            email: user.email,
             phone: user.phone || '',
-            address: '',
+            ...fpoContact,
+            email: user.email,
           },
           adminUser: user._id,
         });
