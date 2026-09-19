@@ -4,7 +4,7 @@
 
 ### Farm to Table. Directly.
 
-*A full-stack marketplace connecting farmers and consumers directly — eliminating middlemen, unfair markups, and unnecessary bureaucracy from India's produce supply chain.*
+*A full-stack marketplace where Farmer Producer Organizations (FPOs) manage farmers, grade produce and sell to consumers — with full traceability from farm to doorstep.*
 
 ![Node.js](https://img.shields.io/badge/Node.js-43853D?style=for-the-badge&logo=node.js&logoColor=white)
 ![Express.js](https://img.shields.io/badge/Express.js-000000?style=for-the-badge&logo=express&logoColor=white)
@@ -29,45 +29,38 @@ There has never been a simple, trustworthy, and direct channel where a farmer ca
 
 ## ✨ What It Does
 
-FarmFresh is a two-sided marketplace with distinct, purpose-built experiences for **Farmers** and **Consumers** — built as a real product, not a toy demo. Every feature below is fully functional, tested, and running on a live database.
+FarmFresh has two purpose-built portals: an **FPO portal** and a **Consumer portal**. Farmers don't have accounts — the FPO onboards and manages them.
 
-| For Farmers 🚜 | For Consumers 🛒 |
+| For FPOs 🏢 | For Consumers 🛒 |
 |---|---|
-| List produce with photos, price, and quantity in seconds | Browse fresh produce from verified local farmers |
-| Track every incoming order in real time | Order directly, with live stock validation |
-| Update order status: Placed → Confirmed → Delivered | Simulated secure checkout experience |
-| Edit or delete listings (with safety checks) | View complete order history |
-| See which produce is trending based on real demand | Discover trending produce automatically |
+| Onboard and manage farmers (manual, CSV or Excel import) | Browse graded produce listed by FPOs |
+| Record produce intake, grade batches, manage inventory | Cart, coupons and multi-item checkout |
+| Publish listings from graded stock | Order tracking, cancel, return and invoices |
+| Grade-based farmer payouts and reports | Subscribe & Save recurring deliveries |
+| Process consumer orders end to end | Reviews, wishlist and traceability passport |
 
 ---
 
 ## 🧠 Engineering Highlights
 
-This isn't just CRUD wrapped in a UI. A few specific decisions were made deliberately to reflect real-world production concerns:
-
 ### 1. Atomic Stock Management (Race Condition Safety)
-The single hardest problem in any marketplace: **what happens when two consumers try to buy the last few kilograms of the same produce at the same time?**
+**What happens when two consumers try to buy the last few kilograms of the same listing at the same time?**
 
-A naive implementation (read stock → check quantity → subtract → save) is vulnerable to a race condition where both orders could succeed, overselling the farmer's stock. FarmFresh solves this using a single **atomic MongoDB operation**:
+A naive read → check → subtract → save flow can oversell. FarmFresh does the check and the decrement as **one atomic MongoDB operation**:
 
 ```javascript
-const produce = await Produce.findOneAndUpdate(
-  { _id: produceId, quantityAvailable: { $gte: quantity } },
-  { $inc: { quantityAvailable: -quantity } },
+const listing = await Listing.findOneAndUpdate(
+  { _id: listingId, status: 'Published', availableQuantityKg: { $gte: qty } },
+  { $inc: { availableQuantityKg: -qty } },
   { new: true }
 );
 ```
 
-This guarantees the stock check and the decrement happen as **one indivisible database operation** — it is architecturally impossible to oversell, even under concurrent load, without needing external locks or transactions.
+### 2. Role-Based Access Control, Enforced Server-Side
+FPO-only endpoints are protected by JWT + role middleware at the API layer, not just hidden in the UI.
 
-### 2. Real Demand-Based Trending Signal
-Rather than hardcoding a "featured" flag, trending status is computed live from actual order data — a MongoDB aggregation pipeline counts orders per produce item over the last 7 days, and items crossing a threshold are flagged as trending. This is a genuine (if simplified) demand-signal system, the same category of logic that powers "popular near you" features in production marketplaces.
-
-### 3. Referential Integrity on Deletion
-Farmers cannot delete a produce listing that has active (non-delivered) orders attached to it — preventing orphaned order records and protecting consumers mid-transaction. This is a small detail, but it's the difference between a project that "works in the happy path" and one that's been thought through for real usage.
-
-### 4. Role-Based Access Control, Enforced Server-Side
-Every farmer-only and consumer-only action is protected by middleware at the API layer — not just hidden in the UI. A consumer cannot call the "create produce" endpoint even by bypassing the frontend entirely, because the JWT payload's role is verified on every protected request.
+### 3. Traceability
+Every batch gets a public Digital Produce Passport (QR) linking a consumer's order back to the batch and farmer.
 
 ---
 
@@ -90,30 +83,32 @@ Every farmer-only and consumer-only action is protected by middleware at the API
 
 ## 📂 Core Data Models
 
-**User** — `name, email, password (hashed), role [farmer|consumer], location`
+**User** — `name, email, password (hashed), role [consumer|fpo_admin|fpo_staff|admin], location, addresses`
 
-**Produce** — `farmerId (ref), name, category, pricePerKg, quantityAvailable, imageUrl, location`
+**Fpo** — profile, registration details, `adminUser`, staff
 
-**Order** — `consumerId (ref), produceId (ref), farmerId (ref), quantity, totalPrice, status [placed|confirmed|delivered]`
+**Farmer** — FPO-managed record: `fpo (ref), name, phone, bank details, isActive, isVerified`
+
+**Batch** — `fpo, farmer, produceType, rawQuantityKg, grading, payout status`
+
+**Listing** — `fpo, produceType, grade, pricePerKg, availableQuantityKg, minOrderQtyKg, status [Draft|Published|Paused]`
+
+**FpoOrder** — `fpo, listing, consumer, quantityKg, totalPrice, status`
 
 ---
 
-## 🔌 API Reference
+## 🔌 API Reference (core)
 
 | Method | Endpoint | Access | Description |
 |---|---|---|---|
-| POST | `/api/auth/register` | Public | Create a new account |
+| POST | `/api/auth/register` | Public | Create a consumer or FPO admin account |
 | POST | `/api/auth/login` | Public | Authenticate and receive JWT |
-| GET | `/api/produce` | Public | Browse all produce (with trending signal) |
-| POST | `/api/produce` | Farmer | Create a new listing (with image) |
-| GET | `/api/produce/mine` | Farmer | View own listings |
-| PUT | `/api/produce/:id` | Farmer | Edit own listing |
-| DELETE | `/api/produce/:id` | Farmer | Delete listing (blocked if active orders exist) |
-| POST | `/api/orders` | Consumer | Place an order (atomic stock decrement) |
-| GET | `/api/orders/mine` | Consumer | View own order history |
-| GET | `/api/orders/received` | Farmer | View incoming orders |
-| PUT | `/api/orders/:id/status` | Farmer | Update order status |
-
+| GET | `/api/listings/public` | Public | Browse published FPO listings |
+| POST | `/api/orders/checkout` | Consumer | Multi-item checkout (atomic stock decrement) |
+| POST | `/api/orders/validate-coupon` | Consumer | Validate a coupon |
+| POST | `/api/fpo-orders` | Consumer | Place a single FPO order |
+| GET | `/api/fpo-orders/mine` | Consumer | Own order history |
+| GET/POST | `/api/fpo/farmers` | FPO | List / add farmers |
 
 ---
 
