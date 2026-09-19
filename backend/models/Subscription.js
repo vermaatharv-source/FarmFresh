@@ -10,16 +10,12 @@ const subscriptionSchema = new mongoose.Schema(
     },
     itemType: {
       type: String,
-      enum: ['FPO', 'DIRECT'],
+      enum: ['FPO'],
       default: 'FPO',
     },
     listing: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Listing',
-    },
-    produce: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Produce',
     },
     produceName: {
       type: String,

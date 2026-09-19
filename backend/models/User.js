@@ -73,7 +73,7 @@ const userSchema = new mongoose.Schema({
     type: String, 
     required: true,
     set: (v) => v.toLowerCase().replace(/\s+/g, '_'), // Automatically formats "FPO Admin" to "fpo_admin"
-    enum: ['farmer', 'consumer', 'admin', 'fpo_admin', 'fpo_staff']
+    enum: ['consumer', 'admin', 'fpo_admin', 'fpo_staff'] // farmers are FPO-managed records (see models/Farmer.js), not user accounts
   },
   location: { 
     type: String, 

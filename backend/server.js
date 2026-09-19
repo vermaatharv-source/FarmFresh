@@ -17,7 +17,6 @@ if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
 const app = express();
 const authRoutes = require('./routes/authRoutes');
-const produceRoutes = require('./routes/produceRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const fpoRoutes = require('./routes/fpoRoutes');
 const listingRoutes = require('./routes/listingRoutes');
@@ -34,13 +33,12 @@ app.use('/uploads', express.static(uploadsDir));
 
 // API Route mounts
 app.use('/api/auth', authRoutes);
-app.use('/api/produce', produceRoutes);
-app.use('/api/orders', orderRoutes); // farmer-direct orders (existing, unchanged)
+app.use('/api/orders', orderRoutes); // coupon validation + unified cart checkout (FPO listings only)
 app.use('/api/fpo', fpoRoutes);
 app.use('/api/listings', listingRoutes); // NEW: FPO product listings, sourced from Inventory
 app.use('/api/fpo-orders', fpoOrderRoutes); // NEW: consumer orders against FPO listings
 app.use('/api/notifications', notificationRoutes); // NEW
-app.use('/api/reports', reportRoutes); // NEW: sales/farmer-performance/monthly/settlement/payout CSV
+app.use('/api/reports', reportRoutes); // sales/farmer-performance/monthly/settlement/payout CSV (FPO-managed farmers)
 app.use('/api/grade-prices', gradePriceRoutes); // NEW: per-crop grade-based pricing configs used by batch grading
 app.use('/api/reviews', reviewRoutes); // Product Reviews & Ratings
 app.use('/api/subscriptions', subscriptionRoutes); // Recurring Subscriptions (Subscribe & Save)

@@ -36,28 +36,18 @@ export default function OrderTrackingModal({ order, isOpen, onClose, onOrderUpda
 
   if (!isOpen || !currentOrder) return null;
 
-  const isFpo = Boolean(currentOrder.listing || currentOrder.fpo);
   const orderId = currentOrder._id;
   const status = currentOrder.status || 'Placed';
   const statusLower = status.toLowerCase();
 
   // Normalize produce item information
-  const itemName = isFpo
-    ? (currentOrder.listing?.produceType || 'FPO Produce')
-    : (currentOrder.produceId?.name || 'Farm Direct Produce');
-  const itemGrade = isFpo
-    ? (currentOrder.gradeOrdered || currentOrder.listing?.grade || 'A')
-    : (currentOrder.produceId?.category || 'Direct');
-  const itemQty = isFpo ? (currentOrder.quantityKg || 0) : (currentOrder.quantity || 0);
+  const itemName = currentOrder.listing?.produceType || 'FPO Produce';
+  const itemGrade = currentOrder.gradeOrdered || currentOrder.listing?.grade || 'A';
+  const itemQty = currentOrder.quantityKg || 0;
   const itemPrice = currentOrder.totalPrice || 0;
-  const sellerName = isFpo
-    ? (currentOrder.fpo?.name || 'Partner FPO')
-    : (currentOrder.farmerId?.name || 'Local Farmer');
-  const sellerLocation = !isFpo && currentOrder.farmerId?.location ? currentOrder.farmerId.location : '';
+  const sellerName = currentOrder.fpo?.name || 'Partner FPO';
 
-  const imageUrl = isFpo
-    ? currentOrder.listing?.images?.[0]
-    : currentOrder.produceId?.imageUrl;
+  const imageUrl = currentOrder.listing?.images?.[0];
   const resolvedImageUrl = imageUrl
     ? (imageUrl.startsWith('http')
         ? imageUrl
@@ -73,13 +63,7 @@ export default function OrderTrackingModal({ order, isOpen, onClose, onOrderUpda
     { key: 'Delivered', label: 'Delivered', desc: 'Safely delivered to your address' },
   ];
 
-  const directStages = [
-    { key: 'placed', label: 'Order Placed', desc: 'Sent to farmer' },
-    { key: 'confirmed', label: 'Farmer Confirmed', desc: 'Farmer confirmed harvest' },
-    { key: 'delivered', label: 'Delivered', desc: 'Delivered to consumer' },
-  ];
-
-  const stages = isFpo ? fpoStages : directStages;
+  const stages = fpoStages;
 
   // Current active step index
   const isCancelled = ['cancelled', 'rejected'].includes(statusLower);
@@ -88,9 +72,7 @@ export default function OrderTrackingModal({ order, isOpen, onClose, onOrderUpda
   const currentStepIndex = stages.findIndex((s) => s.key.toLowerCase() === statusLower);
 
   // Cancellation eligibility
-  const canCancel = isFpo
-    ? ['placed', 'accepted'].includes(statusLower)
-    : ['placed', 'confirmed'].includes(statusLower);
+  const canCancel = ['placed', 'accepted'].includes(statusLower);
 
   // Return eligibility: only delivered, not already pending/processed refund
   const canReturn =
@@ -107,12 +89,7 @@ export default function OrderTrackingModal({ order, isOpen, onClose, onOrderUpda
         ? `${cancelReason} - ${cancelNotes.trim()}`
         : cancelReason;
 
-      let res;
-      if (isFpo) {
-        res = await API.put(`/fpo-orders/${orderId}/consumer-cancel`, { reason: fullReason });
-      } else {
-        res = await API.put(`/orders/${orderId}/cancel`, { reason: fullReason });
-      }
+      const res = await API.put(`/fpo-orders/${orderId}/consumer-cancel`, { reason: fullReason });
 
       const updated = res.data.order || res.data;
       setCurrentOrder(updated);
@@ -136,12 +113,7 @@ export default function OrderTrackingModal({ order, isOpen, onClose, onOrderUpda
         ? `${returnReason} - ${returnNotes.trim()}`
         : returnReason;
 
-      let res;
-      if (isFpo) {
-        res = await API.post(`/fpo-orders/${orderId}/consumer-return`, { reason: fullReason });
-      } else {
-        res = await API.post(`/orders/${orderId}/return`, { reason: fullReason });
-      }
+      const res = await API.post(`/fpo-orders/${orderId}/consumer-return`, { reason: fullReason });
 
       const updated = res.data.order || res.data;
       setCurrentOrder(updated);
@@ -157,32 +129,19 @@ export default function OrderTrackingModal({ order, isOpen, onClose, onOrderUpda
 
   // Handle 1-Click Reorder
   const handleReorder = () => {
-    if (isFpo) {
-      addToCart(
-        {
-          _id: currentOrder.listing?._id || currentOrder.listing,
-          produceType: itemName,
-          pricePerKg: itemQty > 0 ? Math.round(itemPrice / itemQty) : itemPrice,
-          images: currentOrder.listing?.images || [],
-          grade: itemGrade,
-          minOrderQtyKg: 1,
-          fpo: currentOrder.fpo,
-          buyerType: currentOrder.buyerType || 'INDIVIDUAL',
-        },
-        itemQty
-      );
-    } else {
-      addToCart(
-        {
-          _id: currentOrder.produceId?._id || currentOrder.produceId,
-          name: itemName,
-          pricePerKg: itemQty > 0 ? Math.round(itemPrice / itemQty) : itemPrice,
-          imageUrl: currentOrder.produceId?.imageUrl,
-          farmerId: currentOrder.farmerId,
-        },
-        itemQty
-      );
-    }
+    addToCart(
+      {
+        _id: currentOrder.listing?._id || currentOrder.listing,
+        produceType: itemName,
+        pricePerKg: itemQty > 0 ? Math.round(itemPrice / itemQty) : itemPrice,
+        images: currentOrder.listing?.images || [],
+        grade: itemGrade,
+        minOrderQtyKg: 1,
+        fpo: currentOrder.fpo,
+        buyerType: currentOrder.buyerType || 'INDIVIDUAL',
+      },
+      itemQty
+    );
 
     setActionSuccess(`${itemQty}kg of ${itemName} added to your cart!`);
     setTimeout(() => {
@@ -393,11 +352,10 @@ export default function OrderTrackingModal({ order, isOpen, onClose, onOrderUpda
                 </div>
                 <p className="text-xs text-gray-500 mt-0.5">
                   Supplied by: <span className="font-medium text-gray-700">{sellerName}</span>
-                  {sellerLocation && ` · ${sellerLocation}`}
                 </p>
                 <p className="text-xs text-gray-500">
                   Quantity: <span className="font-bold text-gray-800">{itemQty} kg</span>
-                  {isFpo && currentOrder.buyerType && (
+                  {currentOrder.buyerType && (
                     <span className="ml-2 bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded text-[10px]">
                       Buyer: {currentOrder.buyerType}
                     </span>
@@ -735,12 +693,8 @@ export default function OrderTrackingModal({ order, isOpen, onClose, onOrderUpda
       <ReviewModal
         isOpen={isReviewModalOpen}
         onClose={() => setIsReviewModalOpen(false)}
-        targetType={isFpo ? 'Listing' : 'Produce'}
-        targetId={
-          isFpo
-            ? currentOrder.listing?._id || currentOrder.listing
-            : currentOrder.produceId?._id || currentOrder.produceId
-        }
+        targetType="Listing"
+        targetId={currentOrder.listing?._id || currentOrder.listing}
         productName={itemName}
         productImage={imageUrl || ''}
         grade={itemGrade}

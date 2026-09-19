@@ -12,6 +12,13 @@ router.post('/register', async (req, res) => {
   try {
     const { name, email, password, role, location, phone } = req.body;
 
+    // Farmers are not user accounts - FPOs onboard and manage them.
+    if (String(role || '').toLowerCase() === 'farmer') {
+      return res.status(400).json({
+        message: 'Farmer accounts are no longer supported. Farmers are onboarded and managed by their FPO.',
+      });
+    }
+
     const existingUser = await User.findOne({ email });
     if (existingUser) {
       return res.status(400).json({ message: 'User already exists' });
@@ -86,6 +93,13 @@ router.post('/login', async (req, res) => {
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       return res.status(400).json({ message: 'Invalid credentials' });
+    }
+
+    // Legacy accounts from the removed farmer portal can no longer sign in.
+    if (user.role === 'farmer') {
+      return res.status(403).json({
+        message: 'Farmer accounts are no longer supported. Please contact your FPO.',
+      });
     }
 
     const token = jwt.sign(

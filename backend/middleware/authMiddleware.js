@@ -18,11 +18,4 @@ const protect = (req, res, next) => {
   }
 };
 
-const farmerOnly = (req, res, next) => {
-  if (req.user.role !== 'farmer') {
-    return res.status(403).json({ message: 'Access denied: farmers only' });
-  }
-  next();
-};
-
-module.exports = { protect, farmerOnly };
+module.exports = { protect };

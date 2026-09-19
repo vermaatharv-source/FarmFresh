@@ -3,7 +3,6 @@ import React from 'react';
 export default function InvoiceModal({ order, isOpen, onClose }) {
   if (!isOpen || !order) return null;
 
-  const isFpo = Boolean(order.listing || order.fpo);
   const orderId = order._id;
   const shortId = orderId ? orderId.toString().slice(-8).toUpperCase() : 'N/A';
   const invoiceNumber = `FF-${shortId}-${new Date(order.createdAt || Date.now()).getFullYear()}`;
@@ -15,25 +14,17 @@ export default function InvoiceModal({ order, isOpen, onClose }) {
     minute: '2-digit',
   });
 
-  const itemName = isFpo
-    ? (order.listing?.produceType || 'FPO Produce')
-    : (order.produceId?.name || 'Fresh Produce');
-  const itemGrade = isFpo
-    ? (order.gradeOrdered || order.listing?.grade || 'A')
-    : (order.produceId?.category || 'Direct');
-  const itemQty = isFpo ? (order.quantityKg || 0) : (order.quantity || 0);
+  const itemName = order.listing?.produceType || 'FPO Produce';
+  const itemGrade = order.gradeOrdered || order.listing?.grade || 'A';
+  const itemQty = order.quantityKg || 0;
   const totalPrice = Number(order.totalPrice || 0);
   const discountAmount = Number(order.discountAmount || 0);
   const subtotal = totalPrice + discountAmount;
-  const unitPrice = itemQty > 0 ? Math.round(subtotal / itemQty) : (order.listing?.pricePerKg || order.produceId?.pricePerKg || 0);
+  const unitPrice = itemQty > 0 ? Math.round(subtotal / itemQty) : (order.listing?.pricePerKg || 0);
 
-  const sellerName = isFpo
-    ? (order.fpo?.name || 'Associated Farmer Producer Organization')
-    : (order.farmerId?.name || 'Local Verified Farmer');
-  const sellerLocation = isFpo
-    ? (order.fpo?.contactDetails?.address || order.fpo?.location || 'FPO Hub')
-    : (order.farmerId?.location || 'Direct Farm');
-  const sellerReg = isFpo && order.fpo?.registrationNumber ? order.fpo.registrationNumber : null;
+  const sellerName = order.fpo?.name || 'Associated Farmer Producer Organization';
+  const sellerLocation = order.fpo?.contactDetails?.address || order.fpo?.location || 'FPO Hub';
+  const sellerReg = order.fpo?.registrationNumber ? order.fpo.registrationNumber : null;
 
   const customerName = order.deliveryAddress?.fullName || order.consumerId?.name || 'Valued Customer';
   const customerPhone = order.deliveryAddress?.phone || order.consumerId?.phone || 'N/A';
@@ -110,7 +101,7 @@ export default function InvoiceModal({ order, isOpen, onClose }) {
                 <span className="text-3xl">🌾</span>
                 <span className="text-2xl font-black text-emerald-800 tracking-tight">FarmFresh</span>
               </div>
-              <p className="text-xs text-gray-500 font-medium">Farm-to-Door Direct Agricultural Network</p>
+              <p className="text-xs text-gray-500 font-medium">Farm-to-Door Agricultural Network</p>
               <p className="text-xs text-gray-400 mt-0.5">Website: www.farmfresh.local · Support: help@farmfresh.local</p>
             </div>
             <div className="text-right">

@@ -32,8 +32,6 @@ function Register() {
       // Route based on registered user role
       if (res.data.user.role === 'fpo_admin' || res.data.user.role === 'fpo_staff') {
         navigate('/fpo/dashboard');
-      } else if (res.data.user.role === 'farmer') {
-        navigate('/farmer-dashboard');
       } else {
         navigate('/consumer-dashboard');
       }
@@ -56,13 +54,9 @@ function Register() {
           <div className="text-6xl mb-6">🌱</div>
           <h1 className="text-5xl font-extrabold leading-tight mb-4">Join FarmFresh</h1>
           <p className="text-xl text-green-50 max-w-md mb-10">
-            Whether you grow it, manage an FPO, or cook with it, this is where farmers and consumers meet directly.
+            Whether you run an FPO or cook with fresh produce, this is where FPOs and consumers meet.
           </p>
           <div className="space-y-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center text-lg">🚜</div>
-              <p className="text-green-50">Farmers list produce in minutes</p>
-            </div>
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center text-lg">🏢</div>
               <p className="text-green-50">FPOs digitize intakes, grading & stock</p>
@@ -84,7 +78,7 @@ function Register() {
           </div>
 
           <h2 className="text-2xl font-bold text-gray-900 mb-1">Create your account</h2>
-          <p className="text-gray-500 mb-6">Start buying, selling, or managing produce in minutes</p>
+          <p className="text-gray-500 mb-6">Start buying or managing produce in minutes</p>
 
           {error && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-2 rounded-lg mb-4 text-sm">
@@ -95,20 +89,13 @@ function Register() {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">I am a</label>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
                   onClick={() => setFormData({ ...formData, role: 'consumer' })}
                   className={formData.role === 'consumer' ? 'py-2 rounded-lg font-medium text-xs sm:text-sm border-2 border-green-600 bg-green-50 text-green-700 transition' : 'py-2 rounded-lg font-medium text-xs sm:text-sm border-2 border-gray-200 text-gray-500 transition'}
                 >
                   Consumer
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFormData({ ...formData, role: 'farmer' })}
-                  className={formData.role === 'farmer' ? 'py-2 rounded-lg font-medium text-xs sm:text-sm border-2 border-green-600 bg-green-50 text-green-700 transition' : 'py-2 rounded-lg font-medium text-xs sm:text-sm border-2 border-gray-200 text-gray-500 transition'}
-                >
-                  Farmer
                 </button>
                 <button
                   type="button"

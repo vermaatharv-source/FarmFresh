@@ -6,7 +6,8 @@ export function CartProvider({ children }) {
   const [cart, setCart] = useState(() => {
     try {
       const saved = localStorage.getItem('farmfresh_cart');
-      return saved ? JSON.parse(saved) : [];
+      // Drop stale farmer-direct items left over from before the farmer portal was removed
+      return saved ? JSON.parse(saved).filter((item) => item.type === 'FPO') : [];
     } catch {
       return [];
     }
@@ -15,7 +16,7 @@ export function CartProvider({ children }) {
   const [wishlist, setWishlist] = useState(() => {
     try {
       const saved = localStorage.getItem('farmfresh_wishlist');
-      return saved ? JSON.parse(saved) : [];
+      return saved ? JSON.parse(saved).filter((item) => item.type === 'FPO') : [];
     } catch {
       return [];
     }
@@ -59,7 +60,7 @@ export function CartProvider({ children }) {
       } else {
         const newItem = {
           id: product._id,
-          type: product.sourceBatch || product.grade ? 'FPO' : 'DIRECT',
+          type: 'FPO',
           name: product.produceType || product.name,
           category: product.category || 'Fresh Produce',
           pricePerKg: Number(product.pricePerKg),
@@ -68,7 +69,7 @@ export function CartProvider({ children }) {
           availableStock: available,
           imageUrl: product.images?.[0] || product.imageUrl || '',
           grade: product.grade || null,
-          seller: product.fpo?.name || product.farmerId?.name || 'Verified Farmer',
+          seller: product.fpo?.name || 'Verified FPO',
           buyerType: buyerType || 'INDIVIDUAL',
         };
         return [...prevCart, newItem];
@@ -112,7 +113,7 @@ export function CartProvider({ children }) {
           ...prev,
           {
             id: product._id,
-            type: product.sourceBatch || product.grade ? 'FPO' : 'DIRECT',
+            type: 'FPO',
             name: product.produceType || product.name,
             category: product.category || 'Fresh Produce',
             pricePerKg: Number(product.pricePerKg),
@@ -120,7 +121,7 @@ export function CartProvider({ children }) {
             availableStock: Number(product.availableQuantityKg ?? product.quantityAvailable ?? 999),
             imageUrl: product.images?.[0] || product.imageUrl || '',
             grade: product.grade || null,
-            seller: product.fpo?.name || product.farmerId?.name || 'Verified Farmer',
+            seller: product.fpo?.name || 'Verified FPO',
           },
         ];
       }

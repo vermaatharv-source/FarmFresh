@@ -2,7 +2,6 @@ const express = require('express');
 const router = express.Router();
 const Subscription = require('../models/Subscription');
 const Listing = require('../models/Listing');
-const Produce = require('../models/Produce');
 const { protect } = require('../middleware/authMiddleware');
 const { notifyUser } = require('../utils/notify');
 
@@ -46,7 +45,6 @@ router.post('/', protect, async (req, res) => {
     const {
       itemType = 'FPO',
       listingId,
-      produceId,
       quantityKg,
       frequency = 'Weekly',
       deliveryDay = 'Monday',
@@ -68,26 +66,17 @@ router.post('/', protect, async (req, res) => {
     let produceName = 'Farm Fresh Produce';
     let unitPrice = 0;
     let grade = 'A';
-    let targetListing = null;
-    let targetProduce = null;
-
-    if (itemType === 'FPO') {
-      targetListing = await Listing.findById(listingId);
-      if (!targetListing) {
-        return res.status(404).json({ message: 'FPO listing not found or unavailable.' });
-      }
-      produceName = targetListing.produceType;
-      unitPrice = targetListing.pricePerKg;
-      grade = targetListing.grade || 'A';
-    } else {
-      targetProduce = await Produce.findById(produceId);
-      if (!targetProduce) {
-        return res.status(404).json({ message: 'Direct produce not found or unavailable.' });
-      }
-      produceName = targetProduce.name;
-      unitPrice = targetProduce.pricePerKg;
-      grade = targetProduce.category || 'Direct';
+    if (itemType !== 'FPO') {
+      return res.status(400).json({ message: 'Only FPO listings can be subscribed to.' });
     }
+
+    const targetListing = await Listing.findById(listingId);
+    if (!targetListing) {
+      return res.status(404).json({ message: 'FPO listing not found or unavailable.' });
+    }
+    produceName = targetListing.produceType;
+    unitPrice = targetListing.pricePerKg;
+    grade = targetListing.grade || 'A';
 
     const basePrice = Math.round(unitPrice * qty);
     const discountPercent = 5; // 5% Subscribe & Save discount
@@ -97,8 +86,7 @@ router.post('/', protect, async (req, res) => {
     const subscription = await Subscription.create({
       consumer: req.user._id || req.user.id,
       itemType,
-      listing: targetListing ? targetListing._id : undefined,
-      produce: targetProduce ? targetProduce._id : undefined,
+      listing: targetListing._id,
       produceName,
       grade,
       quantityKg: qty,
@@ -143,7 +131,6 @@ router.get('/mine', protect, async (req, res) => {
     const userId = req.user._id || req.user.id;
     const subscriptions = await Subscription.find({ consumer: userId })
       .populate('listing', 'images availableQuantityKg status')
-      .populate('produce', 'imageUrl quantityAvailable')
       .sort({ status: 1, createdAt: -1 });
 
     res.json(subscriptions);

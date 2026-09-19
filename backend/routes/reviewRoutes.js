@@ -2,7 +2,6 @@ const express = require('express');
 const router = express.Router();
 const Review = require('../models/Review');
 const FpoOrder = require('../models/FpoOrder');
-const Order = require('../models/Order');
 const { protect } = require('../middleware/authMiddleware');
 
 // Submit or update a review
@@ -22,6 +21,10 @@ router.post('/', protect, async (req, res) => {
       return res.status(400).json({ message: 'Target product ID is required.' });
     }
 
+    if (targetType !== 'Listing') {
+      return res.status(400).json({ message: 'Only FPO listings can be reviewed.' });
+    }
+
     const numRating = Number(rating);
     if (!numRating || numRating < 1 || numRating > 5) {
       return res.status(400).json({ message: 'Rating must be a number between 1 and 5.' });
@@ -32,36 +35,21 @@ router.post('/', protect, async (req, res) => {
     // Check if consumer is a verified buyer
     let isVerifiedBuyer = false;
     let verifiedOrderId = null;
-    let verifiedOrderModel = 'FpoOrder';
 
-    if (targetType === 'Listing') {
-      const deliveredOrder = await FpoOrder.findOne({
-        consumer: userId,
-        listing: targetId,
-        status: 'Delivered',
-      });
-      if (deliveredOrder) {
-        isVerifiedBuyer = true;
-        verifiedOrderId = deliveredOrder._id;
-        verifiedOrderModel = 'FpoOrder';
-      }
-    } else {
-      const deliveredOrder = await Order.findOne({
-        consumerId: userId,
-        produceId: targetId,
-        status: { $in: ['delivered', 'Delivered'] },
-      });
-      if (deliveredOrder) {
-        isVerifiedBuyer = true;
-        verifiedOrderId = deliveredOrder._id;
-        verifiedOrderModel = 'Order';
-      }
+    const deliveredOrder = await FpoOrder.findOne({
+      consumer: userId,
+      listing: targetId,
+      status: 'Delivered',
+    });
+    if (deliveredOrder) {
+      isVerifiedBuyer = true;
+      verifiedOrderId = deliveredOrder._id;
     }
 
     const filter = {
-      targetType,
+      targetType: 'Listing',
       consumer: userId,
-      ...(targetType === 'Listing' ? { listing: targetId } : { produce: targetId }),
+      listing: targetId,
     };
 
     const updateData = {
@@ -71,7 +59,7 @@ router.post('/', protect, async (req, res) => {
       title: title.trim(),
       comment: comment.trim(),
       isVerifiedBuyer,
-      ...(verifiedOrderId ? { order: verifiedOrderId, orderModel: verifiedOrderModel } : {}),
+      ...(verifiedOrderId ? { order: verifiedOrderId } : {}),
     };
 
     const review = await Review.findOneAndUpdate(
@@ -93,10 +81,10 @@ router.post('/', protect, async (req, res) => {
 router.get('/item/:targetType/:targetId', async (req, res) => {
   try {
     const { targetType, targetId } = req.params;
-    const filter = {
-      targetType,
-      ...(targetType === 'Listing' ? { listing: targetId } : { produce: targetId }),
-    };
+    if (targetType !== 'Listing') {
+      return res.status(400).json({ message: 'Only FPO listings can be reviewed.' });
+    }
+    const filter = { targetType: 'Listing', listing: targetId };
 
     const reviews = await Review.find(filter)
       .populate('consumer', 'name location')
@@ -177,32 +165,23 @@ router.post('/:id/vote', protect, async (req, res) => {
 router.get('/my-review/:targetType/:targetId', protect, async (req, res) => {
   try {
     const { targetType, targetId } = req.params;
+    if (targetType !== 'Listing') {
+      return res.status(400).json({ message: 'Only FPO listings can be reviewed.' });
+    }
     const userId = req.user._id || req.user.id;
 
-    const filter = {
-      targetType,
+    const review = await Review.findOne({
+      targetType: 'Listing',
       consumer: userId,
-      ...(targetType === 'Listing' ? { listing: targetId } : { produce: targetId }),
-    };
+      listing: targetId,
+    });
 
-    const review = await Review.findOne(filter);
-
-    let isVerifiedBuyer = false;
-    if (targetType === 'Listing') {
-      const deliveredOrder = await FpoOrder.findOne({
-        consumer: userId,
-        listing: targetId,
-        status: 'Delivered',
-      });
-      isVerifiedBuyer = Boolean(deliveredOrder);
-    } else {
-      const deliveredOrder = await Order.findOne({
-        consumerId: userId,
-        produceId: targetId,
-        status: { $in: ['delivered', 'Delivered'] },
-      });
-      isVerifiedBuyer = Boolean(deliveredOrder);
-    }
+    const deliveredOrder = await FpoOrder.findOne({
+      consumer: userId,
+      listing: targetId,
+      status: 'Delivered',
+    });
+    const isVerifiedBuyer = Boolean(deliveredOrder);
 
     res.json({
       review,
@@ -217,9 +196,8 @@ router.get('/my-review/:targetType/:targetId', protect, async (req, res) => {
 router.get('/mine', protect, async (req, res) => {
   try {
     const userId = req.user._id || req.user.id;
-    const reviews = await Review.find({ consumer: userId })
+    const reviews = await Review.find({ consumer: userId, targetType: 'Listing' })
       .populate('listing', 'produceType grade images')
-      .populate('produce', 'name category imageUrl')
       .sort({ createdAt: -1 });
 
     res.json(reviews);

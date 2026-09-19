@@ -25,11 +25,6 @@ export default function ConsumerDashboard() {
   } = useCart();
   const navigate = useNavigate();
 
-  // Original farmer-direct marketplace
-  const [produce, setProduce] = useState([]);
-  const [orders, setOrders] = useState([]);
-  const [quantities, setQuantities] = useState({});
-
   // FPO Marketplace
   const [fpoListings, setFpoListings] = useState([]);
   const [fpoOrders, setFpoOrders] = useState([]);
@@ -85,47 +80,27 @@ export default function ConsumerDashboard() {
   // Orders Search & Filtering state
   const [fpoSearchQuery, setFpoSearchQuery] = useState('');
   const [fpoStatusFilter, setFpoStatusFilter] = useState('ALL');
-  const [directSearchQuery, setDirectSearchQuery] = useState('');
-  const [directStatusFilter, setDirectStatusFilter] = useState('ALL');
 
   // 1-Click Reorder handler
   const handleReorderItem = (order) => {
-    const isFpoOrder = Boolean(order.listing || order.fpo);
-    const itemName = isFpoOrder
-      ? (order.listing?.produceType || 'FPO Produce')
-      : (order.produceId?.name || 'Fresh Produce');
-    const itemQty = isFpoOrder ? (order.quantityKg || 1) : (order.quantity || 1);
+    const itemName = order.listing?.produceType || 'FPO Produce';
+    const itemQty = order.quantityKg || 1;
     const itemPrice = order.totalPrice || 0;
-    const itemGrade = isFpoOrder
-      ? (order.gradeOrdered || order.listing?.grade || 'A')
-      : (order.produceId?.category || 'Direct');
+    const itemGrade = order.gradeOrdered || order.listing?.grade || 'A';
 
-    if (isFpoOrder) {
-      addToCart(
-        {
-          _id: order.listing?._id || order.listing,
-          produceType: itemName,
-          pricePerKg: itemQty > 0 ? Math.round(itemPrice / itemQty) : itemPrice,
-          images: order.listing?.images || [],
-          grade: itemGrade,
-          minOrderQtyKg: 1,
-          fpo: order.fpo,
-          buyerType: order.buyerType || 'INDIVIDUAL',
-        },
-        itemQty
-      );
-    } else {
-      addToCart(
-        {
-          _id: order.produceId?._id || order.produceId,
-          name: itemName,
-          pricePerKg: itemQty > 0 ? Math.round(itemPrice / itemQty) : itemPrice,
-          imageUrl: order.produceId?.imageUrl,
-          farmerId: order.farmerId,
-        },
-        itemQty
-      );
-    }
+    addToCart(
+      {
+        _id: order.listing?._id || order.listing,
+        produceType: itemName,
+        pricePerKg: itemQty > 0 ? Math.round(itemPrice / itemQty) : itemPrice,
+        images: order.listing?.images || [],
+        grade: itemGrade,
+        minOrderQtyKg: 1,
+        fpo: order.fpo,
+        buyerType: order.buyerType || 'INDIVIDUAL',
+      },
+      itemQty
+    );
     setSuccess(`${itemQty}kg of ${itemName} added to your cart!`);
     setIsCartOpen(true);
     setTimeout(() => setSuccess(''), 3000);
@@ -139,13 +114,6 @@ export default function ConsumerDashboard() {
       setTab('fpoOrders');
       return;
     }
-    const matchedDirect = orders.find((o) => o._id.toString() === orderId.toString());
-    if (matchedDirect) {
-      openOrderTracking(matchedDirect);
-      setTab('orders');
-      return;
-    }
-
     try {
       const res = await API.get('/fpo-orders/mine');
       setFpoOrders(res.data);
@@ -221,12 +189,6 @@ export default function ConsumerDashboard() {
 
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-
-  // Payment modal (kept for original produce flow)
-  const [paymentModal, setPaymentModal] = useState(null);
-  const [cardData, setCardData] = useState({ number: '', expiry: '', cvv: '', name: '' });
-  const [paymentStatus, setPaymentStatus] = useState('idle');
-  const [paymentError, setPaymentError] = useState('');
 
   // Account & Profile state
   const [profileData, setProfileData] = useState({
@@ -305,27 +267,7 @@ export default function ConsumerDashboard() {
     }
   };
 
-  const fetchProduce = async () => {
-    try {
-      const res = await API.get('/produce');
-      setProduce(res.data);
-    } catch (err) {
-      setError('Failed to load produce');
-    }
-  };
-
-  const fetchOrders = async () => {
-    try {
-      const res = await API.get('/orders/mine');
-      setOrders(res.data);
-    } catch (err) {
-      setError('Failed to load orders');
-    }
-  };
-
   useEffect(() => {
-    fetchProduce();
-    fetchOrders();
     fetchFpoOrders();
     fetchSubscriptions();
     fetchProfile();
@@ -488,94 +430,6 @@ export default function ConsumerDashboard() {
     }
   };
 
-  const handleQuantityChange = (produceId, value) => {
-    setQuantities({ ...quantities, [produceId]: value });
-  };
-
-  const openPaymentModal = (item) => {
-    const quantity = Number(quantities[item._id]);
-    if (!quantity || quantity <= 0) {
-      setError('Enter a valid quantity');
-      return;
-    }
-    setError('');
-    setPaymentError('');
-    setCardData({ number: '', expiry: '', cvv: '', name: '' });
-    setPaymentStatus('idle');
-    setPaymentModal({
-      produceId: item._id,
-      quantity,
-      totalPrice: quantity * item.pricePerKg,
-      name: item.name,
-    });
-  };
-
-  const closeModal = () => {
-    setPaymentModal(null);
-    setPaymentStatus('idle');
-  };
-
-  const handleCardChange = (e) => {
-    let { name, value } = e.target;
-    if (name === 'number') {
-      value = value.replace(/\D/g, '').slice(0, 16).replace(/(.{4})/g, '$1 ').trim();
-    }
-    if (name === 'expiry') {
-      value = value.replace(/\D/g, '').slice(0, 4);
-      if (value.length >= 3) value = value.slice(0, 2) + '/' + value.slice(2);
-    }
-    if (name === 'cvv') {
-      value = value.replace(/\D/g, '').slice(0, 3);
-    }
-    setCardData({ ...cardData, [name]: value });
-  };
-
-  const handlePaySubmit = async (e) => {
-    e.preventDefault();
-    setPaymentError('');
-
-    const digitsOnly = cardData.number.replace(/\s/g, '');
-    if (digitsOnly.length !== 16) {
-      setPaymentError('Enter a valid 16-digit card number');
-      return;
-    }
-    if (!/^\d{2}\/\d{2}$/.test(cardData.expiry)) {
-      setPaymentError('Enter a valid expiry (MM/YY)');
-      return;
-    }
-    if (cardData.cvv.length !== 3) {
-      setPaymentError('Enter a valid 3-digit CVV');
-      return;
-    }
-    if (!cardData.name.trim()) {
-      setPaymentError('Enter the name on card');
-      return;
-    }
-
-    setPaymentStatus('processing');
-
-    setTimeout(async () => {
-      try {
-        await API.post('/orders', {
-          produceId: paymentModal.produceId,
-          quantity: paymentModal.quantity,
-        });
-        setPaymentStatus('success');
-        setQuantities({ ...quantities, [paymentModal.produceId]: '' });
-        fetchProduce();
-        fetchOrders();
-
-        setTimeout(() => {
-          closeModal();
-          setSuccess('Payment successful — order placed!');
-        }, 1200);
-      } catch (err) {
-        setPaymentStatus('idle');
-        setPaymentError(err.response?.data?.message || 'Payment failed — please try again');
-      }
-    }, 2000);
-  };
-
   const handleLogout = () => {
     logout();
     navigate('/login');
@@ -716,8 +570,6 @@ export default function ConsumerDashboard() {
           {[
             { id: 'fpoMarket', label: 'FPO Marketplace' },
             { id: 'fpoOrders', label: `FPO Orders${fpoOrders.length ? ` (${fpoOrders.length})` : ''}` },
-            { id: 'browse', label: 'Farmer Direct' },
-            { id: 'orders', label: 'Direct Orders' },
             { id: 'subscriptions', label: `Subscriptions${subscriptions.length ? ` (${subscriptions.length})` : ''}` },
             { id: 'wishlist', label: `Wishlist${wishlist.length ? ` (${wishlist.length})` : ''}` },
             { id: 'account', label: 'My Account' },
@@ -1252,413 +1104,6 @@ export default function ConsumerDashboard() {
           </div>
         )}
 
-        {/* ==================== ORIGINAL FARMER DIRECT ==================== */}
-        {tab === 'browse' && (
-          <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-5">
-            {produce.length === 0 && (
-              <p className="text-gray-500 text-sm">No produce available right now.</p>
-            )}
-            {produce.map((item) => (
-              <div
-                key={item._id}
-                className="bg-white rounded-xl shadow-sm border overflow-hidden hover:shadow-md transition"
-              >
-                <div className="h-36 bg-gradient-to-br from-green-100 to-emerald-50 flex items-center justify-center overflow-hidden relative">
-                  {item.isTrending && (
-                    <span className="absolute top-2 left-2 bg-orange-500 text-white text-xs font-semibold px-2 py-1 rounded-full z-10">
-                      🔥 Trending
-                    </span>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => toggleWishlist(item)}
-                    title={isInWishlist(item._id) ? 'Remove from wishlist' : 'Save to wishlist'}
-                    className="absolute top-2 right-2 z-10 w-7 h-7 bg-white/90 hover:bg-white rounded-full flex items-center justify-center shadow-sm text-xs transition"
-                  >
-                    {isInWishlist(item._id) ? '❤️' : '🤍'}
-                  </button>
-                  {item.imageUrl ? (
-                    <img
-                      src={
-                        item.imageUrl.startsWith('http')
-                          ? item.imageUrl
-                          : `${(import.meta.env.VITE_API_URL || 'http://localhost:5000/api').replace('/api', '')}${item.imageUrl.startsWith('/') ? '' : '/'}${item.imageUrl}`
-                      }
-                      alt={item.name}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <span className="text-5xl">🥬</span>
-                  )}
-                </div>
-                <div className="p-4">
-                  <h3 className="font-semibold text-gray-900">{item.name}</h3>
-                  <p className="text-xs text-gray-500">{item.category}</p>
-                  <p className="text-green-700 font-bold mt-1">
-                    ₹{item.pricePerKg}
-                    <span className="text-xs font-normal text-gray-500">/kg</span>
-                  </p>
-                  <p className="text-xs text-gray-500 mb-1">{item.quantityAvailable}kg available</p>
-                  <p className="text-xs text-gray-400 mb-3">
-                    By {item.farmerId?.name} · {item.farmerId?.location}
-                  </p>
-
-                  <div className="flex gap-1.5">
-                    <input
-                      type="number"
-                      placeholder="kg"
-                      value={quantities[item._id] || ''}
-                      onChange={(e) => handleQuantityChange(item._id, e.target.value)}
-                      className="w-16 border border-gray-300 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-green-500"
-                      min="1"
-                    />
-                    <button
-                      onClick={() => {
-                        const q = Number(quantities[item._id]) || 1;
-                        addToCart(item, q);
-                      }}
-                      className="flex-1 bg-emerald-700 text-white text-xs py-1.5 rounded-lg hover:bg-emerald-800 transition font-medium flex items-center justify-center gap-1"
-                    >
-                      <span>🛒</span> Add
-                    </button>
-                    <button
-                      onClick={() => openPaymentModal(item)}
-                      className="bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200 text-xs px-2.5 py-1.5 rounded-lg transition font-medium"
-                    >
-                      Buy
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* ==================== DIRECT ORDERS ==================== */}
-        {tab === 'orders' && (
-          <div className="bg-white rounded-xl shadow-sm border p-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-6">
-              <div>
-                <h2 className="text-lg font-bold text-gray-900">My Direct Orders</h2>
-                <p className="text-xs text-gray-500">Track farmer direct orders, view delivery slips, and reorder</p>
-              </div>
-              <span className="text-xs font-semibold px-3 py-1 bg-emerald-50 text-emerald-800 rounded-full border border-emerald-200">
-                {orders.length} {orders.length === 1 ? 'Order' : 'Orders'}
-              </span>
-            </div>
-
-            {/* Direct Orders Filter & Search Bar */}
-            <div className="bg-gray-50/80 p-3 rounded-xl border border-gray-200/80 mb-5 flex flex-col md:flex-row gap-3 items-center justify-between">
-              <div className="relative w-full md:w-80">
-                <input
-                  type="text"
-                  placeholder="Search produce, order ID, or farmer..."
-                  value={directSearchQuery}
-                  onChange={(e) => setDirectSearchQuery(e.target.value)}
-                  className="w-full bg-white border border-gray-300 rounded-lg pl-8 pr-7 py-1.5 text-xs outline-none focus:border-emerald-600"
-                />
-                <span className="absolute left-2.5 top-2 text-gray-400 text-xs">🔍</span>
-                {directSearchQuery && (
-                  <button
-                    onClick={() => setDirectSearchQuery('')}
-                    className="absolute right-2.5 top-1 text-gray-400 hover:text-gray-600 text-sm font-bold"
-                  >
-                    ×
-                  </button>
-                )}
-              </div>
-
-              <div className="flex flex-wrap items-center gap-1.5 w-full md:w-auto">
-                {[
-                  { key: 'ALL', label: 'All Orders' },
-                  { key: 'ACTIVE', label: 'In Progress' },
-                  { key: 'delivered', label: 'Delivered' },
-                  { key: 'cancelled', label: 'Cancelled' },
-                ].map((st) => (
-                  <button
-                    key={st.key}
-                    onClick={() => setDirectStatusFilter(st.key)}
-                    className={`px-3 py-1 rounded-lg text-xs font-semibold transition ${
-                      directStatusFilter === st.key
-                        ? 'bg-emerald-700 text-white shadow-xs'
-                        : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-100'
-                    }`}
-                  >
-                    {st.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              {(() => {
-                const filtered = orders.filter((order) => {
-                  const s = (order.status || 'placed').toLowerCase();
-                  if (directStatusFilter === 'ACTIVE') {
-                    if (['delivered', 'cancelled', 'rejected'].includes(s)) return false;
-                  } else if (directStatusFilter === 'delivered') {
-                    if (s !== 'delivered') return false;
-                  } else if (directStatusFilter === 'cancelled') {
-                    if (!['cancelled', 'rejected'].includes(s)) return false;
-                  }
-                  if (directSearchQuery.trim()) {
-                    const q = directSearchQuery.toLowerCase();
-                    const name = (order.produceId?.name || '').toLowerCase();
-                    const id = (order._id || '').toLowerCase();
-                    const farmerName = (order.farmerId?.name || '').toLowerCase();
-                    return name.includes(q) || id.includes(q) || farmerName.includes(q);
-                  }
-                  return true;
-                });
-
-                if (filtered.length === 0) {
-                  return (
-                    <div className="text-center py-12 border-2 border-dashed rounded-xl">
-                      <span className="text-4xl">🥬</span>
-                      <p className="text-gray-500 text-sm mt-2 font-medium">
-                        {orders.length === 0 ? 'No direct orders placed yet.' : 'No orders match your search or filter.'}
-                      </p>
-                      {orders.length > 0 ? (
-                        <button
-                          onClick={() => {
-                            setDirectSearchQuery('');
-                            setDirectStatusFilter('ALL');
-                          }}
-                          className="mt-2 text-xs text-emerald-700 hover:underline font-semibold"
-                        >
-                          Clear filters
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => setTab('browse')}
-                          className="mt-3 inline-flex items-center text-xs font-semibold text-emerald-700 hover:text-emerald-800 bg-emerald-50 px-3.5 py-1.5 rounded-lg transition"
-                        >
-                          Browse Farmer Marketplace →
-                        </button>
-                      )}
-                    </div>
-                  );
-                }
-
-                return filtered.map((order) => {
-                const statusNorm = (order.status || 'placed').toLowerCase();
-                const isCancelled = statusNorm === 'cancelled' || statusNorm === 'rejected';
-                const isDelivered = statusNorm === 'delivered';
-                const canCancel = ['placed', 'confirmed'].includes(statusNorm);
-
-                const directSteps = [
-                  { key: 'placed', label: 'Placed' },
-                  { key: 'confirmed', label: 'Confirmed' },
-                  { key: 'delivered', label: 'Delivered' },
-                ];
-                const stepIdx = directSteps.findIndex((s) => s.key === statusNorm);
-
-                return (
-                  <div
-                    key={order._id}
-                    className="border border-gray-200 rounded-xl p-5 hover:border-emerald-300 transition shadow-sm bg-white"
-                  >
-                    {/* Top Row: Meta info & Status */}
-                    <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-mono font-bold text-gray-600 bg-gray-100 px-2 py-0.5 rounded">
-                          #{order._id.slice(-8).toUpperCase()}
-                        </span>
-                        <span className="text-xs text-gray-400">
-                          {new Date(order.createdAt).toLocaleDateString('en-IN', {
-                            day: 'numeric',
-                            month: 'short',
-                            year: 'numeric',
-                          })}
-                        </span>
-                        <span className="text-[10px] bg-green-50 text-green-700 px-1.5 py-0.5 rounded font-medium">
-                          Farmer Direct
-                        </span>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        {order.refundStatus && order.refundStatus !== 'NotRequired' && (
-                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
-                            Refund: {order.refundStatus}
-                          </span>
-                        )}
-                        <span
-                          className={`text-xs px-2.5 py-1 rounded-full font-semibold capitalize ${
-                            statusColor[order.status] || 'bg-gray-100 text-gray-700'
-                          }`}
-                        >
-                          {order.status}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Middle Row: Product info */}
-                    <div className="py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-14 h-14 rounded-xl bg-green-50 border flex items-center justify-center overflow-hidden flex-shrink-0">
-                          {order.produceId?.imageUrl ? (
-                            <img
-                              src={
-                                order.produceId.imageUrl.startsWith('http')
-                                  ? order.produceId.imageUrl
-                                  : `${(import.meta.env.VITE_API_URL || 'http://localhost:5000/api').replace('/api', '')}${order.produceId.imageUrl.startsWith('/') ? '' : '/'}${order.produceId.imageUrl}`
-                              }
-                              alt={order.produceId.name}
-                              className="w-full h-full object-cover"
-                            />
-                          ) : (
-                            <span className="text-2xl">🥬</span>
-                          )}
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <h3 className="font-bold text-gray-900">
-                              {order.produceId?.name || 'Farm Produce'}
-                            </h3>
-                            {order.produceId?.category && (
-                              <span className="text-[11px] font-medium px-2 py-0.5 rounded bg-gray-100 text-gray-700">
-                                {order.produceId.category}
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-xs text-gray-500 mt-0.5">
-                            Farmer: <span className="font-medium text-gray-700">{order.farmerId?.name || 'Local Farmer'}</span>
-                            {order.farmerId?.location && ` (${order.farmerId.location})`}
-                          </p>
-                          <p className="text-xs text-gray-500 mt-0.5">
-                            Qty: <span className="font-semibold text-gray-800">{order.quantity} kg</span>
-                            {order.deliverySlot && ` · Slot: ${order.deliverySlot}`}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="text-left sm:text-right">
-                        <p className="text-lg font-bold text-emerald-800">₹{order.totalPrice}</p>
-                        <p className="text-xs text-gray-400">
-                          Paid via {order.paymentMethod || 'CARD'}
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Mini Visual Stepper (if not cancelled) */}
-                    {!isCancelled && (
-                      <div className="py-2.5 px-3 bg-gray-50/70 rounded-xl mb-4 border border-gray-100">
-                        <div className="flex items-center justify-between text-[11px]">
-                          {directSteps.map((step, idx) => {
-                            const isDone = stepIdx > idx || stepIdx === directSteps.length - 1;
-                            const isCurrent = stepIdx === idx && stepIdx !== directSteps.length - 1;
-
-                            return (
-                              <div key={step.key} className="flex items-center gap-1.5">
-                                <span
-                                  className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold ${
-                                    isDone
-                                      ? 'bg-emerald-600 text-white'
-                                      : isCurrent
-                                      ? 'bg-emerald-100 text-emerald-800 ring-2 ring-emerald-400'
-                                      : 'bg-gray-200 text-gray-400'
-                                  }`}
-                                >
-                                  {isDone ? '✓' : idx + 1}
-                                </span>
-                                <span
-                                  className={`font-medium ${
-                                    isDone || isCurrent ? 'text-gray-800' : 'text-gray-400'
-                                  }`}
-                                >
-                                  {step.label}
-                                </span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Cancellation reason banner if cancelled */}
-                    {isCancelled && order.cancelReason && (
-                      <div className="mb-4 p-2.5 bg-red-50 text-red-700 rounded-lg text-xs border border-red-100">
-                        <span className="font-semibold">Cancellation Note:</span> {order.cancelReason}
-                      </div>
-                    )}
-
-                    {/* Bottom Action Bar */}
-                    <div className="pt-3 border-t flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        {/* Track Order Details */}
-                        <button
-                          onClick={() => openOrderTracking(order)}
-                          className="px-3.5 py-1.5 text-xs font-semibold bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg shadow-sm transition flex items-center gap-1.5"
-                        >
-                          <span>🔍</span> Track Order & Receipt
-                        </button>
-
-                        {/* Official Invoice Button */}
-                        <button
-                          onClick={() => openInvoiceModal(order)}
-                          className="px-3 py-1.5 text-xs font-semibold text-gray-700 bg-gray-50 hover:bg-gray-100 border border-gray-300 rounded-lg transition flex items-center gap-1 shadow-2xs"
-                          title="View and Print Official Tax Invoice"
-                        >
-                          <span>🧾</span> Invoice
-                        </button>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        {/* Quick Cancel */}
-                        {canCancel && (
-                          <button
-                            onClick={() => openOrderTracking(order)}
-                            className="px-3 py-1.5 text-xs font-medium text-red-600 hover:text-red-700 hover:bg-red-50 border border-red-200 rounded-lg transition"
-                          >
-                            Cancel
-                          </button>
-                        )}
-
-                        {/* Quick Return */}
-                        {isDelivered && (!order.refundStatus || order.refundStatus === 'NotRequired') && (
-                          <button
-                            onClick={() => openOrderTracking(order)}
-                            className="px-3 py-1.5 text-xs font-medium text-amber-700 hover:text-amber-800 hover:bg-amber-50 border border-amber-200 rounded-lg transition"
-                          >
-                            Return / Refund
-                          </button>
-                        )}
-
-                        {/* Rate & Review Produce */}
-                        {isDelivered && (
-                          <button
-                            onClick={() =>
-                              openReviewModal(
-                                'Produce',
-                                order.produceId?._id || order.produceId,
-                                order.produceId?.name || 'Farm Produce',
-                                order.produceId?.imageUrl || '',
-                                order.produceId?.category || ''
-                              )
-                            }
-                            className="px-3 py-1.5 text-xs font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg transition flex items-center gap-1"
-                          >
-                            <span>⭐</span> Rate
-                          </button>
-                        )}
-
-                        {/* 1-Click Reorder */}
-                        <button
-                          onClick={() => handleReorderItem(order)}
-                          className="px-3 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition flex items-center gap-1"
-                        >
-                          <span>🔁</span> Reorder
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              });
-            })()}
-            </div>
-          </div>
-        )}
-
         {/* ==================== RECURRING SUBSCRIPTIONS ==================== */}
         {tab === 'subscriptions' && (
           <div className="bg-white rounded-xl shadow-sm border p-6">
@@ -1849,7 +1294,7 @@ export default function ConsumerDashboard() {
                   <span>❤️</span> Saved Produce & Wishlist ({wishlist.length})
                 </h2>
                 <p className="text-xs text-gray-500 mt-0.5">
-                  Items you have bookmarked for quick ordering from local farmers & FPOs
+                  Items you have bookmarked for quick ordering from FPOs
                 </p>
               </div>
             </div>
@@ -2212,7 +1657,7 @@ export default function ConsumerDashboard() {
               <div>
                 <h3 className="text-lg font-bold">Looking for your order history?</h3>
                 <p className="text-emerald-100 text-xs mt-1">
-                  Track your direct farmer harvests ({orders.length}) and verified FPO bulk/retail shipments ({fpoOrders.length}).
+                  Track your verified FPO bulk/retail shipments ({fpoOrders.length}).
                 </p>
               </div>
               <div className="flex gap-2">
@@ -2222,95 +1667,11 @@ export default function ConsumerDashboard() {
                 >
                   View FPO Orders
                 </button>
-                <button
-                  onClick={() => setTab('orders')}
-                  className="bg-emerald-900/60 text-white text-xs font-bold px-4 py-2 rounded-lg hover:bg-emerald-900 transition border border-emerald-500/30"
-                >
-                  View Direct Orders
-                </button>
               </div>
             </div>
           </div>
         )}
       </main>
-
-      {/* Payment Modal */}
-      {paymentModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-md w-full p-6">
-            {paymentStatus === 'success' ? (
-              <div className="text-center py-8">
-                <div className="text-5xl mb-3">✅</div>
-                <h3 className="text-xl font-bold text-green-700">Payment Successful!</h3>
-                <p className="text-gray-500 mt-1">Your order has been placed.</p>
-              </div>
-            ) : (
-              <>
-                <h3 className="text-lg font-bold text-gray-900 mb-1">Complete Payment</h3>
-                <p className="text-sm text-gray-500 mb-4">
-                  {paymentModal.name} · {paymentModal.quantity}kg · ₹{paymentModal.totalPrice}
-                </p>
-
-                <form onSubmit={handlePaySubmit} className="space-y-3">
-                  <input
-                    name="name"
-                    placeholder="Name on card"
-                    value={cardData.name}
-                    onChange={handleCardChange}
-                    className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:border-emerald-500"
-                    required
-                  />
-                  <input
-                    name="number"
-                    placeholder="Card number"
-                    value={cardData.number}
-                    onChange={handleCardChange}
-                    className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:border-emerald-500"
-                    required
-                  />
-                  <div className="flex gap-3">
-                    <input
-                      name="expiry"
-                      placeholder="MM/YY"
-                      value={cardData.expiry}
-                      onChange={handleCardChange}
-                      className="w-1/2 border rounded-lg px-3 py-2 text-sm outline-none focus:border-emerald-500"
-                      required
-                    />
-                    <input
-                      name="cvv"
-                      placeholder="CVV"
-                      value={cardData.cvv}
-                      onChange={handleCardChange}
-                      className="w-1/2 border rounded-lg px-3 py-2 text-sm outline-none focus:border-emerald-500"
-                      required
-                    />
-                  </div>
-
-                  {paymentError && <p className="text-red-600 text-sm">{paymentError}</p>}
-
-                  <div className="flex gap-3 pt-2">
-                    <button
-                      type="button"
-                      onClick={closeModal}
-                      className="flex-1 border rounded-lg py-2 text-sm font-medium hover:bg-gray-50"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={paymentStatus === 'processing'}
-                      className="flex-1 bg-emerald-700 text-white rounded-lg py-2 text-sm font-medium hover:bg-emerald-800 disabled:opacity-60"
-                    >
-                      {paymentStatus === 'processing' ? 'Processing...' : `Pay ₹${paymentModal.totalPrice}`}
-                    </button>
-                  </div>
-                </form>
-              </>
-            )}
-          </div>
-        </div>
-      )}
 
       {/* Address Modal */}
       {addressModalOpen && (
@@ -2508,7 +1869,6 @@ export default function ConsumerDashboard() {
           setTrackingOrder(null);
         }}
         onOrderUpdated={() => {
-          fetchOrders();
           fetchFpoOrders();
         }}
       />

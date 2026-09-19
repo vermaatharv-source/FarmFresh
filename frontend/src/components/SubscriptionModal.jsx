@@ -79,8 +79,7 @@ export default function SubscriptionModal({
 
       const res = await API.post('/subscriptions', {
         itemType,
-        listingId: itemType === 'FPO' ? item._id : undefined,
-        produceId: itemType === 'DIRECT' ? item._id : undefined,
+        listingId: item._id,
         quantityKg,
         frequency,
         deliveryDay,

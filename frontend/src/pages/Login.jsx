@@ -26,9 +26,7 @@ function Login() {
 
       // Route based on role
       const role = res.data.user.role;
-      if (role === 'farmer') {
-        navigate('/farmer-dashboard');
-      } else if (role === 'fpo_admin' || role === 'fpo_staff') {
+      if (role === 'fpo_admin' || role === 'fpo_staff') {
         navigate('/fpo/dashboard');
       } else {
         navigate('/consumer-dashboard');
@@ -52,16 +50,16 @@ function Login() {
           <div className="text-6xl mb-6">🌾</div>
           <h1 className="text-5xl font-extrabold leading-tight mb-4">FarmFresh</h1>
           <p className="text-xl text-green-50 max-w-md">
-            Straight from the farm to your table. No middlemen, no markups — just farmers and consumers, connected directly.
+            Fresh, traceable produce from Farmer Producer Organizations, straight to your table. No markups, full transparency.
           </p>
           <div className="mt-10 flex gap-8">
             <div>
               <p className="text-3xl font-bold">100%</p>
-              <p className="text-green-100 text-sm">Direct Trade</p>
+              <p className="text-green-100 text-sm">Traceable</p>
             </div>
             <div>
-              <p className="text-3xl font-bold">0</p>
-              <p className="text-green-100 text-sm">Middlemen</p>
+              <p className="text-3xl font-bold">FPO</p>
+              <p className="text-green-100 text-sm">Verified</p>
             </div>
           </div>
         </div>

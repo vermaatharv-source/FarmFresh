@@ -3,7 +3,6 @@ import { useAuth } from '../context/AuthContext';
 
 // Maps a role to where it should land instead of a route it's not allowed on.
 const roleHome = (role) => {
-  if (role === 'farmer') return '/farmer-dashboard';
   if (role === 'fpo_admin' || role === 'fpo_staff') return '/fpo/dashboard';
   return '/consumer-dashboard';
 };

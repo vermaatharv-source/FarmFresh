@@ -4,18 +4,13 @@ const reviewSchema = new mongoose.Schema(
   {
     targetType: {
       type: String,
-      enum: ['Listing', 'Produce'],
+      enum: ['Listing'],
       required: true,
       default: 'Listing',
     },
     listing: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Listing',
-      index: true,
-    },
-    produce: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Produce',
       index: true,
     },
     consumer: {
@@ -26,12 +21,7 @@ const reviewSchema = new mongoose.Schema(
     },
     order: {
       type: mongoose.Schema.Types.ObjectId,
-      refPath: 'orderModel',
-    },
-    orderModel: {
-      type: String,
-      enum: ['FpoOrder', 'Order'],
-      default: 'FpoOrder',
+      ref: 'FpoOrder',
     },
     rating: {
       type: Number,
@@ -80,6 +70,5 @@ const reviewSchema = new mongoose.Schema(
 );
 
 reviewSchema.index({ listing: 1, consumer: 1 }, { sparse: true });
-reviewSchema.index({ produce: 1, consumer: 1 }, { sparse: true });
 
 module.exports = mongoose.model('Review', reviewSchema);

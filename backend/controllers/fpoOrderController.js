@@ -16,8 +16,8 @@ exports.createOrder = async (req, res) => {
     const { listingId, quantityKg, buyerType = 'INDIVIDUAL' } = req.body;
     const qty = Number(quantityKg);
 
-    const listing = await Listing.findOne({ _id: listingId, status: 'Published' });
-    if (!listing) {
+    const existingListing = await Listing.findOne({ _id: listingId, status: 'Published' });
+    if (!existingListing) {
       return res.status(404).json({ message: 'Listing not found or not published.' });
     }
 
@@ -25,17 +25,24 @@ exports.createOrder = async (req, res) => {
       return res.status(400).json({ message: 'Invalid buyer type.' });
     }
 
-    if (!(qty >= listing.minOrderQtyKg)) {
-      return res.status(400).json({ message: `Minimum order quantity is ${listing.minOrderQtyKg}kg.` });
+    if (!(qty >= existingListing.minOrderQtyKg)) {
+      return res.status(400).json({ message: `Minimum order quantity is ${existingListing.minOrderQtyKg}kg.` });
     }
 
-    if (listing.availableQuantityKg < qty) {
+    if (existingListing.availableQuantityKg < qty) {
       return res.status(400).json({ message: 'Not enough quantity available.' });
     }
 
-    // Reduce available stock on listing
-    listing.availableQuantityKg -= qty;
-    await listing.save();
+    // Reduce available stock on listing — atomic check + decrement in one DB
+    // operation, so concurrent orders can never oversell the listing.
+    const listing = await Listing.findOneAndUpdate(
+      { _id: listingId, status: 'Published', availableQuantityKg: { $gte: qty } },
+      { $inc: { availableQuantityKg: -qty } },
+      { new: true }
+    );
+    if (!listing) {
+      return res.status(400).json({ message: 'Not enough quantity available.' });
+    }
 
     // Update inventory
     const inv = await Inventory.findOne({
@@ -321,4 +328,4 @@ exports.consumerRequestReturn = async (req, res) => {
   } catch (e) {
     res.status(500).json({ message: e.message });
   }
-};
+};

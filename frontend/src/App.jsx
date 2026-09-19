@@ -1,7 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import Login from './pages/Login';
 import Register from './pages/Register';
-import FarmerDashboard from './pages/FarmerDashboard';
 import ConsumerDashboard from './pages/ConsumerDashboard';
 import FpoDashboard from './pages/FpoDashboard';
 import TraceabilityPassport from './pages/TraceabilityPassport';
@@ -15,14 +14,6 @@ function App() {
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
 
-      <Route
-        path="/farmer-dashboard"
-        element={
-          <ProtectedRoute allowedRoles={['farmer']}>
-            <FarmerDashboard />
-          </ProtectedRoute>
-        }
-      />
       <Route
         path="/consumer-dashboard"
         element={
