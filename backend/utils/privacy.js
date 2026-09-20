@@ -1,6 +1,6 @@
-// Aadhaar numbers must never be stored or shown in full. This keeps only the
-// last 4 digits ("XXXX XXXX 1234"). It is idempotent, so applying it to an
-// already-masked value returns the same value.
+const crypto = require('crypto');
+
+// Aadhaar: store / return only last 4 digits
 const maskAadhaar = (v) => {
   if (v === undefined || v === null || v === '') return v;
   const digits = String(v).replace(/\D/g, '');
@@ -8,4 +8,67 @@ const maskAadhaar = (v) => {
   return `XXXX XXXX ${digits.slice(-4)}`;
 };
 
-module.exports = { maskAadhaar };
+// Bank account encryption at rest (AES-256-GCM)
+// Set BANK_ENCRYPTION_KEY in .env as a 32-byte hex string (64 hex chars).
+// Generate once: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+const getKey = () => {
+  const hex = process.env.BANK_ENCRYPTION_KEY || '';
+  if (hex.length === 64) return Buffer.from(hex, 'hex');
+  // Fallback dev key — replace in production
+  return crypto.createHash('sha256').update(process.env.JWT_SECRET || 'farmfresh-dev-key').digest();
+};
+
+// A value that came back from the API already masked ("XXXXXX1234").
+const looksMasked = (v) => /^[Xx*\s-]+\d{0,4}$/.test(String(v || '').trim());
+
+// Mongoose setter (needs `this`, so it is a normal function, not an arrow).
+// A masked value must never be encrypted as if it were the real number, so it
+// keeps whatever is already stored instead.
+function encryptBankField(plain) {
+  if (plain === undefined || plain === null || plain === '') return plain;
+  const str = String(plain);
+  // Already encrypted marker
+  if (str.startsWith('enc:')) return str;
+  if (looksMasked(str)) {
+    return this && typeof this.get === 'function'
+      ? this.get('bankDetails.accountNumber', null, { getters: false })
+      : undefined;
+  }
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', getKey(), iv);
+  const enc = Buffer.concat([cipher.update(str, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `enc:${iv.toString('hex')}:${tag.toString('hex')}:${enc.toString('hex')}`;
+}
+
+const decryptBankField = (stored) => {
+  if (stored === undefined || stored === null || stored === '') return stored;
+  const str = String(stored);
+  if (!str.startsWith('enc:')) return str; // legacy plain text
+  try {
+    const [, ivHex, tagHex, dataHex] = str.split(':');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', getKey(), Buffer.from(ivHex, 'hex'));
+    decipher.setAuthTag(Buffer.from(tagHex, 'hex'));
+    const dec = Buffer.concat([decipher.update(Buffer.from(dataHex, 'hex')), decipher.final()]);
+    return dec.toString('utf8');
+  } catch {
+    return '********';
+  }
+};
+
+/** Mask account number for non-admin display: show last 4 only */
+const maskAccountNumber = (v) => {
+  if (!v) return v;
+  const plain = decryptBankField(v);
+  const digits = String(plain).replace(/\D/g, '');
+  if (digits.length < 4) return '****';
+  return `XXXXXX${digits.slice(-4)}`;
+};
+
+module.exports = {
+  looksMasked,
+  maskAadhaar,
+  encryptBankField,
+  decryptBankField,
+  maskAccountNumber,
+};

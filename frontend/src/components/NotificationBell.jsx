@@ -128,7 +128,7 @@ export default function NotificationBell({ onSelectOrder }) {
   };
 
   return (
-    <div className="relative" ref={dropdownRef}>
+    <div className="relative z-[100]" ref={dropdownRef}>
       {/* Bell Button */}
       <button
         type="button"
@@ -153,7 +153,7 @@ export default function NotificationBell({ onSelectOrder }) {
 
       {/* Dropdown Panel */}
       {isOpen && (
-        <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-white rounded-2xl shadow-2xl border border-gray-100 z-50 overflow-hidden animate-fadeIn">
+        <div className="absolute right-0 top-full mt-2 w-80 sm:w-96 bg-white rounded-2xl shadow-2xl border border-gray-100 z-[9999] overflow-hidden animate-fadeIn">
           {/* Panel Header */}
           <div className="p-3.5 border-b bg-gradient-to-r from-emerald-800 to-teal-800 text-white flex items-center justify-between">
             <div className="flex items-center gap-2">

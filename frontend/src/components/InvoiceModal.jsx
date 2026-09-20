@@ -1,4 +1,5 @@
 import React from 'react';
+import BrandLogo from './BrandLogo';
 
 export default function InvoiceModal({ order, isOpen, onClose }) {
   if (!isOpen || !order) return null;
@@ -98,8 +99,7 @@ export default function InvoiceModal({ order, isOpen, onClose }) {
           <div className="flex justify-between items-start border-b border-gray-200 pb-6 mb-6">
             <div>
               <div className="flex items-center gap-2 mb-1">
-                <span className="text-3xl">🌾</span>
-                <span className="text-2xl font-black text-emerald-800 tracking-tight">FarmFresh</span>
+                <BrandLogo size="md" />
               </div>
               <p className="text-xs text-gray-500 font-medium">Farm-to-Door Agricultural Network</p>
               <p className="text-xs text-gray-400 mt-0.5">Website: www.farmfresh.local · Support: help@farmfresh.local</p>

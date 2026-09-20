@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import API from '../api/axios';
+import BrandLogo from '../components/BrandLogo';
 
 export default function TraceabilityPassport() {
   const { batchId } = useParams();
@@ -74,16 +75,11 @@ export default function TraceabilityPassport() {
           </div>
 
           {/* Section 2: Origin & FPO */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4">
             <div className="p-4 border border-gray-100 rounded-xl bg-gray-50/50">
               <p className="text-xs font-semibold text-gray-500 uppercase mb-1">Farmer Information</p>
               <p className="font-bold text-gray-800">{data.farmer?.name}</p>
               <p className="text-sm text-gray-600">{data.farmer?.region || 'Location Not Specified'}</p>
-            </div>
-            <div className="p-4 border border-gray-100 rounded-xl bg-gray-50/50">
-              <p className="text-xs font-semibold text-gray-500 uppercase mb-1">Assigned FPO</p>
-              <p className="font-bold text-gray-800">{data.fpo?.name}</p>
-              <p className="text-sm text-gray-600">{data.fpo?.contact?.phone || data.fpo?.contact?.email || 'N/A'}</p>
             </div>
           </div>
 
@@ -135,7 +131,10 @@ export default function TraceabilityPassport() {
 
           {/* Footer badge */}
           <div className="text-center pt-2">
-            <p className="text-xs text-gray-400">Powered by FarmFresh Traceability Engine</p>
+            <div className="flex flex-col items-center gap-2">
+              <BrandLogo size="sm" className="opacity-80" />
+              <p className="text-xs text-gray-400">Powered by FarmFresh Traceability Engine</p>
+            </div>
           </div>
         </div>
       </div>

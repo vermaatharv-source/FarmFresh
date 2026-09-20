@@ -4,7 +4,7 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const Fpo = require('../models/Fpo'); // 1. Require Fpo model
 const { protect } = require('../middleware/authMiddleware');
-const { validateFpoDetails } = require('../utils/Fpovalidation');
+const { validateFpoDetails } = require('../utils/fpoValidation');
 
 const router = express.Router();
 

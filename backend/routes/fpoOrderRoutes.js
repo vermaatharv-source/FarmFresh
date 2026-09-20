@@ -1,4 +1,4 @@
-const express=require('express');const router=express.Router();const c=require('../controllers/fpoOrderController');const {protect}=require('../middleware/authMiddleware');const {authorizeRoles}=require('../middleware/roleMiddleware');
+const express=require('express');const router=express.Router();const {auditMiddleware}=require('../middleware/auditMiddleware');router.use(auditMiddleware);const c=require('../controllers/fpoOrderController');const {protect}=require('../middleware/authMiddleware');const {authorizeRoles}=require('../middleware/roleMiddleware');
 router.post('/',protect,authorizeRoles('consumer'),c.createOrder);router.get('/mine',protect,authorizeRoles('consumer'),c.getMyOrders);
 router.get('/fpo',protect,authorizeRoles('fpo_admin','fpo_staff'),c.getFpoOrders);
 router.patch('/:id/status',protect,authorizeRoles('fpo_admin','fpo_staff'),c.updateOrderStatus);

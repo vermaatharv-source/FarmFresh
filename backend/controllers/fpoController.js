@@ -11,10 +11,11 @@ const fs = require('fs');
 const csv = require('csv-parser');
 const QRCode = require('qrcode');
 const { notify } = require('../utils/notify');
-const { validateFpoDetails } = require('../utils/Fpovalidation');
+const { validateFpoDetails } = require('../utils/fpoValidation');
 const GradePriceConfig = require('../models/GradePriceConfig');
 const FpoOrder = require('../models/FpoOrder');
 const Listing = require('../models/Listing');
+const farmerHandlers = require('./farmerHandlers');
 
 // Helper function to resolve FPO ID for logged-in user
 const getFpoIdForUser = async (userId) => {
@@ -24,6 +25,15 @@ const getFpoIdForUser = async (userId) => {
   });
   return fpo ? fpo._id : null;
 };
+
+// —— Farmer handlers (govt fields, bank encryption, audit) ——
+exports.addFarmer = farmerHandlers.addFarmer;
+exports.getFarmers = farmerHandlers.getFarmers;
+exports.getFarmerDetail = farmerHandlers.getFarmerDetail;
+exports.updateFarmer = farmerHandlers.updateFarmer;
+exports.importFarmersExcel = farmerHandlers.importFarmersExcel;
+exports.getActivityLogs = farmerHandlers.getActivityLogs;
+exports.revealBankDetails = farmerHandlers.revealBankDetails;
 
 // 1. Register a new FPO Profile
 exports.registerFpo = async (req, res) => {
@@ -35,7 +45,6 @@ exports.registerFpo = async (req, res) => {
       return res.status(400).json({ message: error });
     }
 
-    // Prevent an admin from ending up with more than one FPO profile.
     const existingForAdmin = await Fpo.findOne({ adminUser: userId });
     if (existingForAdmin) {
       return res.status(400).json({ message: 'You already have an FPO profile registered.' });
@@ -136,35 +145,7 @@ exports.addStaff = async (req, res) => {
   }
 };
 
-// 5. Add / Register Single Farmer
-exports.addFarmer = async (req, res) => {
-  try {
-    const userId = req.user._id || req.user.id;
-    const fpoId = await getFpoIdForUser(userId);
-    if (!fpoId) {
-      return res.status(400).json({ message: 'Associated FPO profile not found. Please register FPO profile first.' });
-    }
-
-    const { name, phone, aadhaarNumber, address, bankDetails } = req.body;
-
-    const farmer = await Farmer.create({
-      fpo: fpoId,
-      name,
-      phone,
-      aadhaarNumber,
-      address,
-      bankDetails,
-    });
-
-    await notify(fpoId, 'NewFarmer', `New farmer registered: ${farmer.name}.`, { farmerId: farmer._id });
-
-    res.status(201).json({ message: 'Farmer registered successfully', farmer });
-  } catch (error) {
-    res.status(500).json({ message: 'Server Error', error: error.message });
-  }
-};
-
-// NEW: Toggle Farmer Verification (separate from active/inactive status)
+// NEW: Toggle Farmer Verification
 exports.toggleFarmerVerification = async (req, res) => {
   try {
     const userId = req.user._id || req.user.id;
@@ -188,58 +169,9 @@ exports.toggleFarmerVerification = async (req, res) => {
   }
 };
 
-// NEW: Farmer profile + history (produce batches + payouts).
-// NOTE: once produce is graded it merges into pooled Inventory by
-// produceType+grade, so exact per-farmer "sales" can't be attributed after
-// that point — this returns the farmer's batch and payout history instead,
-// which is what's actually traceable in the current data model.
-exports.getFarmerDetail = async (req, res) => {
-  try {
-    const userId = req.user._id || req.user.id;
-    const fpoId = await getFpoIdForUser(userId);
-    if (!fpoId) {
-      return res.status(400).json({ message: 'Associated FPO profile not found.' });
-    }
-
-    const { farmerId } = req.params;
-    const farmer = await Farmer.findOne({ _id: farmerId, fpo: fpoId });
-    if (!farmer) {
-      return res.status(404).json({ message: 'Farmer not found.' });
-    }
-
-    const batches = await Batch.find({ fpo: fpoId, farmer: farmerId }).sort({ createdAt: -1 });
-    const payouts = await Payout.find({ fpo: fpoId, farmer: farmerId }).populate('batch', 'batchId').sort({ createdAt: -1 });
-
-    const totalIntakeKg = batches.reduce((sum, b) => sum + b.rawQuantityKg, 0);
-    const totalPaid = payouts.filter((p) => p.status === 'Completed').reduce((sum, p) => sum + p.amount, 0);
-
-    res.json({ farmer, batches, payouts, totalIntakeKg, totalPaid });
-  } catch (error) {
-    res.status(500).json({ message: 'Server Error', error: error.message });
-  }
-};
-
-// 6. Get All Farmers Assigned to FPO
-exports.getFarmers = async (req, res) => {
-  try {
-    const userId = req.user._id || req.user.id;
-    const fpoId = await getFpoIdForUser(userId);
-    if (!fpoId) {
-      return res.json([]); // Return empty array if no FPO profile exists yet
-    }
-
-    const farmers = await Farmer.find({ fpo: fpoId });
-    res.json(farmers);
-  } catch (error) {
-    res.status(500).json({ message: 'Server Error', error: error.message });
-  }
-};
-
 // 7. Toggle Farmer Active / Inactive Status
 exports.toggleFarmerStatus = async (req, res) => {
   try {
-    // FIX (IDOR): scope the lookup to the caller's own FPO instead of a bare
-    // findById, so one FPO's admin/staff can't toggle another FPO's farmer.
     const userId = req.user._id || req.user.id;
     const fpoId = await getFpoIdForUser(userId);
     if (!fpoId) {
@@ -262,7 +194,7 @@ exports.toggleFarmerStatus = async (req, res) => {
   }
 };
 
-// 8. Bulk Import Farmers from CSV File
+// 8. Bulk Import Farmers from CSV File (legacy CSV stream path kept)
 exports.importFarmersCsv = async (req, res) => {
   try {
     const userId = req.user._id || req.user.id;
@@ -287,6 +219,17 @@ exports.importFarmersCsv = async (req, res) => {
             phone: row.phone,
             aadhaarNumber: row.aadhaarNumber || '',
             address: row.address || '',
+            village: row.village || '',
+            block: row.block || '',
+            district: row.district || '',
+            state: row.state || '',
+            landHoldingAcres: Number(row.landHoldingAcres || 0) || 0,
+            cropsGrown: row.cropsGrown || row.crops
+              ? String(row.cropsGrown || row.crops).split(/[,;|]/).map((s) => s.trim()).filter(Boolean)
+              : [],
+            gender: row.gender || '',
+            category: row.category || '',
+            memberId: row.memberId || '',
             bankDetails: {
               accountNumber: row.accountNumber || '',
               ifscCode: row.ifscCode || '',
@@ -296,15 +239,12 @@ exports.importFarmersCsv = async (req, res) => {
         }
       })
       .on('end', async () => {
-        // FIX: this async callback now has its own try/catch. Previously,
-        // any insertMany failure here became an unhandled promise rejection
-        // that left the request hanging (or could crash the process),
-        // because the outer try/catch had already returned control once the
-        // stream was registered.
         try {
           if (farmersToInsert.length === 0) {
             fs.unlinkSync(req.file.path);
-            return res.status(400).json({ message: 'No valid rows found in CSV (need at least "name" and "phone" columns).' });
+            return res.status(400).json({
+              message: 'No valid rows found in CSV (need at least "name" and "phone" columns).',
+            });
           }
 
           const createdFarmers = await Farmer.insertMany(farmersToInsert, { ordered: false });
@@ -314,13 +254,19 @@ exports.importFarmersCsv = async (req, res) => {
             farmers: createdFarmers,
           });
         } catch (insertErr) {
-          try { fs.unlinkSync(req.file.path); } catch (_) { /* file may already be gone */ }
-          res.status(500).json({ message: 'Failed to import farmers from CSV.', error: insertErr.message });
+          try {
+            fs.unlinkSync(req.file.path);
+          } catch (_) {}
+          res.status(500).json({
+            message: 'Failed to import farmers from CSV.',
+            error: insertErr.message,
+          });
         }
       })
       .on('error', (streamErr) => {
-        // FIX: also handle a broken/corrupt CSV stream itself.
-        try { fs.unlinkSync(req.file.path); } catch (_) { /* ignore */ }
+        try {
+          fs.unlinkSync(req.file.path);
+        } catch (_) {}
         res.status(400).json({ message: 'Failed to read CSV file.', error: streamErr.message });
       });
   } catch (error) {
@@ -339,7 +285,6 @@ exports.createBatchIntake = async (req, res) => {
 
     const { farmerId, produceType, rawQuantityKg, harvestDate } = req.body;
 
-    // FIX: make sure the farmer being credited actually belongs to this FPO.
     const farmer = await Farmer.findOne({ _id: farmerId, fpo: fpoId });
     if (!farmer) {
       return res.status(404).json({ message: 'Farmer not found for this FPO.' });
@@ -347,7 +292,9 @@ exports.createBatchIntake = async (req, res) => {
 
     const generatedBatchId = `BATCH-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
     const frontendBase = process.env.FRONTEND_URL || 'http://localhost:5173';
-    const qrData = await QRCode.toDataURL(`${frontendBase.replace(/\/$/, '')}/trace/${generatedBatchId}`);
+    const qrData = await QRCode.toDataURL(
+      `${frontendBase.replace(/\/$/, '')}/trace/${generatedBatchId}`
+    );
 
     const batch = await Batch.create({
       batchId: generatedBatchId,
@@ -359,8 +306,15 @@ exports.createBatchIntake = async (req, res) => {
       qrCodeUrl: qrData,
     });
 
-    await notify(fpoId, 'NewIntake', `New intake recorded: ${rawQuantityKg}kg of ${produceType} from ${farmer.name}.`, { batchId: batch._id });
-    await notify(fpoId, 'GradingPending', `Batch ${generatedBatchId} is awaiting grading.`, { batchId: batch._id });
+    await notify(
+      fpoId,
+      'NewIntake',
+      `New intake recorded: ${rawQuantityKg}kg of ${produceType} from ${farmer.name}.`,
+      { batchId: batch._id }
+    );
+    await notify(fpoId, 'GradingPending', `Batch ${generatedBatchId} is awaiting grading.`, {
+      batchId: batch._id,
+    });
 
     res.status(201).json({ message: 'Produce intake batch recorded', batch });
   } catch (error) {
@@ -383,27 +337,70 @@ exports.gradeBatch = async (req, res) => {
     const c = Number(req.body.gradeC_Kg) || 0;
     const score = Number(req.body.qualityScore);
     const status = req.body.status || 'Approved';
-    if ([a,b,c].some(v => v < 0)) return res.status(400).json({ message: 'Grade quantities cannot be negative.' });
-    if (a + b + c > batch.rawQuantityKg) return res.status(400).json({ message: 'Graded quantity cannot exceed raw intake quantity.' });
-    if (!['Pending','Approved','Rejected'].includes(status)) return res.status(400).json({ message: 'Invalid grading status.' });
-    if (!Number.isNaN(score) && (score < 0 || score > 100)) return res.status(400).json({ message: 'Quality score must be between 0 and 100.' });
+    if ([a, b, c].some((v) => v < 0))
+      return res.status(400).json({ message: 'Grade quantities cannot be negative.' });
+    if (a + b + c > batch.rawQuantityKg)
+      return res
+        .status(400)
+        .json({ message: 'Graded quantity cannot exceed raw intake quantity.' });
+    if (!['Pending', 'Approved', 'Rejected'].includes(status))
+      return res.status(400).json({ message: 'Invalid grading status.' });
+    if (!Number.isNaN(score) && (score < 0 || score > 100))
+      return res.status(400).json({ message: 'Quality score must be between 0 and 100.' });
 
-    const old = batch.grading || { gradeA_Kg:0, gradeB_Kg:0, gradeC_Kg:0 };
+    const old = batch.grading || { gradeA_Kg: 0, gradeB_Kg: 0, gradeC_Kg: 0 };
     let config = null;
     if (status === 'Approved') {
-      config = await GradePriceConfig.findOne({ fpo:fpoId, cropName:batch.produceType, isActive:true, effectiveFrom:{$lte:new Date()} }).sort({ effectiveFrom:-1 });
-      if (!config) return res.status(400).json({ message:`No active grade pricing configured for ${batch.produceType}. Create a Grade Price Config before approving this batch.` });
+      config = await GradePriceConfig.findOne({
+        fpo: fpoId,
+        cropName: batch.produceType,
+        isActive: true,
+        effectiveFrom: { $lte: new Date() },
+      }).sort({ effectiveFrom: -1 });
+      if (!config)
+        return res.status(400).json({
+          message: `No active grade pricing configured for ${batch.produceType}. Create a Grade Price Config before approving this batch.`,
+        });
     }
-    const qualityImages = req.files?.length ? req.files.map(file => file.path) : (old.qualityImages || []);
-    const entry = { gradeA_Kg:a, gradeB_Kg:b, gradeC_Kg:c, qualityScore: Number.isNaN(score) ? old.qualityScore : score, qualityImages, status, gradedBy:userId, gradedAt:new Date() };
+    const qualityImages = req.files?.length
+      ? req.files.map((file) => file.path)
+      : old.qualityImages || [];
+    const entry = {
+      gradeA_Kg: a,
+      gradeB_Kg: b,
+      gradeC_Kg: c,
+      qualityScore: Number.isNaN(score) ? old.qualityScore : score,
+      qualityImages,
+      status,
+      gradedBy: userId,
+      gradedAt: new Date(),
+    };
 
-    // Idempotent inventory sync: remove the previous approved allocation before applying the new one.
     if (old.status === 'Approved') {
-      for (const [grade, qty] of [['A',old.gradeA_Kg],['B',old.gradeB_Kg],['C',old.gradeC_Kg]]) {
+      for (const [grade, qty] of [
+        ['A', old.gradeA_Kg],
+        ['B', old.gradeB_Kg],
+        ['C', old.gradeC_Kg],
+      ]) {
         if (qty > 0) {
-          const inv = await Inventory.findOne({ fpo:fpoId, produceType:batch.produceType, grade });
-          if (inv) { inv.totalQuantity = Math.max(0, inv.totalQuantity - qty); await inv.save(); }
-          await StockMovement.create({ fpo:fpoId, produceType:batch.produceType, grade, type:'Adjustment', quantityKg:-qty, batch:batch._id, note:'Regrading replaced previous approved allocation' });
+          const inv = await Inventory.findOne({
+            fpo: fpoId,
+            produceType: batch.produceType,
+            grade,
+          });
+          if (inv) {
+            inv.totalQuantity = Math.max(0, inv.totalQuantity - qty);
+            await inv.save();
+          }
+          await StockMovement.create({
+            fpo: fpoId,
+            produceType: batch.produceType,
+            grade,
+            type: 'Adjustment',
+            quantityKg: -qty,
+            batch: batch._id,
+            note: 'Regrading replaced previous approved allocation',
+          });
         }
       }
     }
@@ -412,24 +409,65 @@ exports.gradeBatch = async (req, res) => {
     batch.gradingHistory.push(entry);
 
     if (status === 'Approved') {
-      batch.pricingSnapshot = { gradeAPricePerKg:config.gradeAPricePerKg, gradeBPricePerKg:config.gradeBPricePerKg, gradeCPricePerKg:config.gradeCPricePerKg, referenceMarketPrice:config.referenceMarketPrice, effectiveFrom:config.effectiveFrom };
-      batch.amountOwedToFarmer = a*config.gradeAPricePerKg + b*config.gradeBPricePerKg + c*config.gradeCPricePerKg;
+      batch.pricingSnapshot = {
+        gradeAPricePerKg: config.gradeAPricePerKg,
+        gradeBPricePerKg: config.gradeBPricePerKg,
+        gradeCPricePerKg: config.gradeCPricePerKg,
+        referenceMarketPrice: config.referenceMarketPrice,
+        effectiveFrom: config.effectiveFrom,
+      };
+      batch.amountOwedToFarmer =
+        a * config.gradeAPricePerKg +
+        b * config.gradeBPricePerKg +
+        c * config.gradeCPricePerKg;
       batch.payoutStatus = batch.payoutStatus === 'PAID' ? 'PAID' : 'PENDING';
     }
     await batch.save();
 
     if (status === 'Approved') {
-      for (const item of [{grade:'A',qty:a},{grade:'B',qty:b},{grade:'C',qty:c}]) {
+      for (const item of [
+        { grade: 'A', qty: a },
+        { grade: 'B', qty: b },
+        { grade: 'C', qty: c },
+      ]) {
         if (!item.qty) continue;
-        const inv = await Inventory.findOneAndUpdate({fpo:fpoId,produceType:batch.produceType,grade:item.grade},{$inc:{totalQuantity:item.qty}},{upsert:true,new:true});
-        await StockMovement.create({ fpo:fpoId,produceType:batch.produceType,grade:item.grade,type:'Intake',quantityKg:item.qty,batch:batch._id,note:'Approved grading allocation' });
-        const freeStock = inv.totalQuantity-inv.reservedQuantity-inv.soldQuantity;
-        if (freeStock <= inv.minAlertThreshold) await notify(fpoId,'LowInventory',`Low stock: ${batch.produceType} Grade ${item.grade} is at ${freeStock}kg.`,{produceType:batch.produceType,grade:item.grade});
+        const inv = await Inventory.findOneAndUpdate(
+          { fpo: fpoId, produceType: batch.produceType, grade: item.grade },
+          { $inc: { totalQuantity: item.qty } },
+          { upsert: true, new: true }
+        );
+        await StockMovement.create({
+          fpo: fpoId,
+          produceType: batch.produceType,
+          grade: item.grade,
+          type: 'Intake',
+          quantityKg: item.qty,
+          batch: batch._id,
+          note: 'Approved grading allocation',
+        });
+        const freeStock = inv.totalQuantity - inv.reservedQuantity - inv.soldQuantity;
+        if (freeStock <= inv.minAlertThreshold)
+          await notify(
+            fpoId,
+            'LowInventory',
+            `Low stock: ${batch.produceType} Grade ${item.grade} is at ${freeStock}kg.`,
+            { produceType: batch.produceType, grade: item.grade }
+          );
       }
     }
-    await notify(fpoId,'GradingUpdate',`Batch ${batch.batchId} graded as A:${a}kg B:${b}kg C:${c}kg. Farmer payout owed: ₹${batch.amountOwedToFarmer||0}.`,{batchId:batch._id});
-    res.json({ message:'Batch grading updated, pricing snapshot calculated and inventory synchronized.', batch });
-  } catch (error) { res.status(500).json({ message:'Server Error', error:error.message }); }
+    await notify(
+      fpoId,
+      'GradingUpdate',
+      `Batch ${batch.batchId} graded as A:${a}kg B:${b}kg C:${c}kg. Farmer payout owed: ₹${batch.amountOwedToFarmer || 0}.`,
+      { batchId: batch._id }
+    );
+    res.json({
+      message: 'Batch grading updated, pricing snapshot calculated and inventory synchronized.',
+      batch,
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Server Error', error: error.message });
+  }
 };
 
 // 11. Get All Batches
@@ -438,10 +476,10 @@ exports.getBatches = async (req, res) => {
     const userId = req.user._id || req.user.id;
     const fpoId = await getFpoIdForUser(userId);
     if (!fpoId) {
-      return res.json([]); // Return empty array if no FPO profile exists yet
+      return res.json([]);
     }
 
-    const batches = await Batch.find({ fpo: fpoId }).populate('farmer', 'name phone address');
+    const batches = await Batch.find({ fpo: fpoId }).populate('farmer', 'name phone address village');
     res.json(batches);
   } catch (error) {
     res.status(500).json({ message: 'Server Error', error: error.message });
@@ -454,7 +492,7 @@ exports.getInventory = async (req, res) => {
     const userId = req.user._id || req.user.id;
     const fpoId = await getFpoIdForUser(userId);
     if (!fpoId) {
-      return res.json([]); // Return empty array if no FPO profile exists yet
+      return res.json([]);
     }
 
     const inventory = await Inventory.find({ fpo: fpoId });
@@ -464,7 +502,6 @@ exports.getInventory = async (req, res) => {
   }
 };
 
-// NEW: Stock movement history (Intake / Reserved / Released / Sold / Cancelled / Adjustment)
 exports.getStockMovements = async (req, res) => {
   try {
     const userId = req.user._id || req.user.id;
@@ -478,7 +515,6 @@ exports.getStockMovements = async (req, res) => {
   }
 };
 
-// NEW: Items currently at or below their low-stock threshold
 exports.getLowStockAlerts = async (req, res) => {
   try {
     const userId = req.user._id || req.user.id;
@@ -499,21 +535,27 @@ exports.getLowStockAlerts = async (req, res) => {
   }
 };
 
-// NEW: Preview the grade-based payout owed for a graded batch (no writes)
 exports.calculateBatchPayout = async (req, res) => {
   try {
     const userId = req.user._id || req.user.id;
     const fpoId = await getFpoIdForUser(userId);
     if (!fpoId) return res.status(400).json({ message: 'Associated FPO profile not found.' });
 
-    const batch = await Batch.findOne({ _id: req.params.batchId, fpo: fpoId }).populate('farmer', 'name phone address');
+    const batch = await Batch.findOne({ _id: req.params.batchId, fpo: fpoId }).populate(
+      'farmer',
+      'name phone address'
+    );
     if (!batch) return res.status(404).json({ message: 'Batch not found.' });
 
     if (!batch.grading || batch.grading.status !== 'Approved') {
-      return res.status(400).json({ message: 'Batch must be graded and approved before a payout can be calculated.' });
+      return res
+        .status(400)
+        .json({ message: 'Batch must be graded and approved before a payout can be calculated.' });
     }
     if (!batch.pricingSnapshot || batch.pricingSnapshot.gradeAPricePerKg == null) {
-      return res.status(400).json({ message: 'No pricing snapshot found on this batch. Re-grade the batch to capture current pricing.' });
+      return res.status(400).json({
+        message: 'No pricing snapshot found on this batch. Re-grade the batch to capture current pricing.',
+      });
     }
 
     const { gradeA_Kg = 0, gradeB_Kg = 0, gradeC_Kg = 0 } = batch.grading;
@@ -524,7 +566,8 @@ exports.calculateBatchPayout = async (req, res) => {
       gradeB: { qtyKg: gradeB_Kg, pricePerKg: gradeBPricePerKg, subtotal: gradeB_Kg * gradeBPricePerKg },
       gradeC: { qtyKg: gradeC_Kg, pricePerKg: gradeCPricePerKg, subtotal: gradeC_Kg * gradeCPricePerKg },
     };
-    const computedAmount = breakdown.gradeA.subtotal + breakdown.gradeB.subtotal + breakdown.gradeC.subtotal;
+    const computedAmount =
+      breakdown.gradeA.subtotal + breakdown.gradeB.subtotal + breakdown.gradeC.subtotal;
 
     res.json({
       batchId: batch._id,
@@ -542,7 +585,6 @@ exports.calculateBatchPayout = async (req, res) => {
   }
 };
 
-// NEW: Create the payout for a batch directly from its grade-based pricing snapshot
 exports.createAutoPayout = async (req, res) => {
   try {
     const userId = req.user._id || req.user.id;
@@ -552,7 +594,9 @@ exports.createAutoPayout = async (req, res) => {
     const batch = await Batch.findOne({ _id: req.params.batchId, fpo: fpoId });
     if (!batch) return res.status(404).json({ message: 'Batch not found.' });
     if (!batch.grading || batch.grading.status !== 'Approved') {
-      return res.status(400).json({ message: 'Batch must be graded and approved before it can be paid out.' });
+      return res
+        .status(400)
+        .json({ message: 'Batch must be graded and approved before it can be paid out.' });
     }
     if (batch.payoutStatus === 'PAID') {
       return res.status(400).json({ message: 'This batch has already been paid.' });
@@ -563,10 +607,13 @@ exports.createAutoPayout = async (req, res) => {
 
     const finalAmount = Number(batch.amountOwedToFarmer || 0);
     if (!(finalAmount > 0)) {
-      return res.status(400).json({ message: 'Computed payout amount is zero. Check the batch grading and pricing snapshot.' });
+      return res.status(400).json({
+        message: 'Computed payout amount is zero. Check the batch grading and pricing snapshot.',
+      });
     }
 
-    const { paymentMethod = 'BANK_TRANSFER', fundedFrom = 'FPO_CASH', transactionId } = req.body || {};
+    const { paymentMethod = 'BANK_TRANSFER', fundedFrom = 'FPO_CASH', transactionId } =
+      req.body || {};
 
     const payout = await Payout.create({
       fpo: fpoId,
@@ -587,12 +634,21 @@ exports.createAutoPayout = async (req, res) => {
       batch.payoutStatus = 'PAID';
       batch.paidAt = new Date();
       await batch.save();
-      await Farmer.findByIdAndUpdate(farmer._id, { $inc: { totalEarnedLifetime: finalAmount } }).catch(() => {});
+      await Farmer.findByIdAndUpdate(farmer._id, {
+        $inc: { totalEarnedLifetime: finalAmount },
+      }).catch(() => {});
     }
 
-    await notify(fpoId, 'PayoutUpdate', `Auto-payout of ₹${finalAmount} created for ${farmer.name} from batch ${batch.batchId} (${payout.status}).`, { payoutId: payout._id, batchId: batch._id });
+    await notify(
+      fpoId,
+      'PayoutUpdate',
+      `Auto-payout of ₹${finalAmount} created for ${farmer.name} from batch ${batch.batchId} (${payout.status}).`,
+      { payoutId: payout._id, batchId: batch._id }
+    );
 
-    res.status(201).json({ message: 'Auto payout created from batch grading snapshot.', payout, batch });
+    res
+      .status(201)
+      .json({ message: 'Auto payout created from batch grading snapshot.', payout, batch });
   } catch (error) {
     res.status(500).json({ message: 'Server Error', error: error.message });
   }
@@ -603,24 +659,63 @@ exports.createPayout = async (req, res) => {
   try {
     const userId = req.user._id || req.user.id;
     const fpoId = await getFpoIdForUser(userId);
-    if (!fpoId) return res.status(400).json({ message:'Associated FPO profile not found.' });
-    const { farmerId, batchId, amount, transactionId, paymentMethod='BANK_TRANSFER', fundedFrom='FPO_CASH' } = req.body;
-    if (!farmerId && !batchId) return res.status(400).json({ message:'batchId is required for automatic grade-based payout calculation.' });
+    if (!fpoId) return res.status(400).json({ message: 'Associated FPO profile not found.' });
+    const {
+      farmerId,
+      batchId,
+      amount,
+      transactionId,
+      paymentMethod = 'BANK_TRANSFER',
+      fundedFrom = 'FPO_CASH',
+    } = req.body;
+    if (!farmerId && !batchId)
+      return res
+        .status(400)
+        .json({ message: 'batchId is required for automatic grade-based payout calculation.' });
     let batch = null;
     if (batchId) {
-      batch = await Batch.findOne({ _id:batchId, fpo:fpoId });
-      if (!batch) return res.status(404).json({ message:'Batch not found for this FPO.' });
+      batch = await Batch.findOne({ _id: batchId, fpo: fpoId });
+      if (!batch) return res.status(404).json({ message: 'Batch not found for this FPO.' });
     }
-    const farmer = await Farmer.findOne({ _id:batch?.farmer || farmerId, fpo:fpoId });
-    if (!farmer) return res.status(404).json({ message:'Farmer not found for this FPO.' });
+    const farmer = await Farmer.findOne({ _id: batch?.farmer || farmerId, fpo: fpoId });
+    if (!farmer) return res.status(404).json({ message: 'Farmer not found for this FPO.' });
     const finalAmount = batch ? Number(batch.amountOwedToFarmer || 0) : Number(amount);
-    if (!(finalAmount >= 0)) return res.status(400).json({ message:'A valid payout amount is required.' });
-    if (batch && batch.payoutStatus === 'PAID') return res.status(400).json({ message:'This batch has already been paid.' });
-    const payout = await Payout.create({ fpo:fpoId, farmer:farmer._id, batch:batch?._id, produceIntakeIds:batch?[batch._id]:[], amount:finalAmount, totalAmount:finalAmount, paymentMethod, fundedFrom, transactionId, status:transactionId?'Completed':'Pending', paymentDate:transactionId?new Date():undefined, paidAt:transactionId?new Date():undefined });
-    if (batch && payout.status === 'Completed') { batch.payoutStatus='PAID'; batch.paidAt=new Date(); await batch.save(); await Farmer.findByIdAndUpdate(farmer._id,{$inc:{totalEarnedLifetime:finalAmount}}).catch(()=>{}); }
-    await notify(fpoId,'PayoutUpdate',`Payout of ₹${finalAmount} recorded for ${farmer.name} (${payout.status}).`,{payoutId:payout._id});
-    res.status(201).json({ message:'Payout recorded using grade-based pricing.', payout });
-  } catch(error) { res.status(500).json({ message:'Server Error', error:error.message }); }
+    if (!(finalAmount >= 0))
+      return res.status(400).json({ message: 'A valid payout amount is required.' });
+    if (batch && batch.payoutStatus === 'PAID')
+      return res.status(400).json({ message: 'This batch has already been paid.' });
+    const payout = await Payout.create({
+      fpo: fpoId,
+      farmer: farmer._id,
+      batch: batch?._id,
+      produceIntakeIds: batch ? [batch._id] : [],
+      amount: finalAmount,
+      totalAmount: finalAmount,
+      paymentMethod,
+      fundedFrom,
+      transactionId,
+      status: transactionId ? 'Completed' : 'Pending',
+      paymentDate: transactionId ? new Date() : undefined,
+      paidAt: transactionId ? new Date() : undefined,
+    });
+    if (batch && payout.status === 'Completed') {
+      batch.payoutStatus = 'PAID';
+      batch.paidAt = new Date();
+      await batch.save();
+      await Farmer.findByIdAndUpdate(farmer._id, {
+        $inc: { totalEarnedLifetime: finalAmount },
+      }).catch(() => {});
+    }
+    await notify(
+      fpoId,
+      'PayoutUpdate',
+      `Payout of ₹${finalAmount} recorded for ${farmer.name} (${payout.status}).`,
+      { payoutId: payout._id }
+    );
+    res.status(201).json({ message: 'Payout recorded using grade-based pricing.', payout });
+  } catch (error) {
+    res.status(500).json({ message: 'Server Error', error: error.message });
+  }
 };
 
 // 14. Get Payouts
@@ -629,7 +724,7 @@ exports.getPayouts = async (req, res) => {
     const userId = req.user._id || req.user.id;
     const fpoId = await getFpoIdForUser(userId);
     if (!fpoId) {
-      return res.json([]); // Return empty array if no FPO profile exists yet
+      return res.json([]);
     }
 
     const payouts = await Payout.find({ fpo: fpoId }).populate('farmer batch');
@@ -645,7 +740,6 @@ exports.getAnalytics = async (req, res) => {
     const userId = req.user._id || req.user.id;
     const fpoId = await getFpoIdForUser(userId);
     if (!fpoId) {
-      // Return zeroed metrics with 200 OK so UI loads smoothly
       return res.json({
         totalFarmers: 0,
         totalBatches: 0,
@@ -674,18 +768,14 @@ exports.getAnalytics = async (req, res) => {
 };
 
 // 16. Public Digital Produce Passport (Traceability)
-// 16. Public Digital Produce Passport (Traceability)
-// Accepts both human-readable batchId (BATCH-xxx) and MongoDB _id
 exports.getBatchTraceability = async (req, res) => {
   try {
     const { batchId } = req.params;
 
-    // Try human-readable batchId first
     let batch = await Batch.findOne({ batchId })
       .populate('farmer', 'name address village phone')
       .populate('fpo', 'name contactDetails registrationNumber');
 
-    // Fallback: try MongoDB _id if it is a valid ObjectId
     if (!batch && mongoose.Types.ObjectId.isValid(batchId)) {
       batch = await Batch.findById(batchId)
         .populate('farmer', 'name address village phone')
@@ -693,7 +783,9 @@ exports.getBatchTraceability = async (req, res) => {
     }
 
     if (!batch) {
-      return res.status(404).json({ message: 'Traceability passport not found for this Batch ID.' });
+      return res
+        .status(404)
+        .json({ message: 'Traceability passport not found for this Batch ID.' });
     }
 
     const listings = await Listing.find({
@@ -743,8 +835,6 @@ exports.getBatchTraceability = async (req, res) => {
   }
 };
 
-
-// Complete missing FPO management operations.
 exports.updateProfile = async (req, res) => {
   try {
     const uid = req.user._id || req.user.id;
@@ -776,18 +866,173 @@ exports.updateProfile = async (req, res) => {
     res.status(400).json({ message: e.message });
   }
 };
-exports.updateStaff = async(req,res)=>{try{const f=await Fpo.findOne({adminUser:req.user._id||req.user.id});if(!f||!f.staff.some(x=>x.toString()===req.params.staffId))return res.status(404).json({message:'Staff member not found.'});const u=await User.findById(req.params.staffId);if(!u)return res.status(404).json({message:'User not found.'});if(req.body.name!==undefined)u.name=req.body.name;if(req.body.location!==undefined)u.location=req.body.location;if(req.body.password)u.password=await bcrypt.hash(req.body.password,10);await u.save();res.json(u);}catch(e){res.status(400).json({message:e.message});}};
-exports.removeStaff = async(req,res)=>{try{const f=await Fpo.findOne({adminUser:req.user._id||req.user.id});if(!f)return res.status(404).json({message:'FPO not found.'});const id=req.params.staffId;if(!f.staff.some(x=>x.toString()===id))return res.status(404).json({message:'Staff member not found.'});f.staff=f.staff.filter(x=>x.toString()!==id);await f.save();await User.findOneAndUpdate({_id:id,role:'fpo_staff'},{$set:{role:'consumer'}});res.json({message:'Staff deactivated and removed from FPO.'});}catch(e){res.status(500).json({message:e.message});}};
-exports.verifyKyc = async(req,res)=>{try{if(req.user.role!=='admin')return res.status(403).json({message:'Only authority admin can verify KYC.'});const {status,reason}=req.body;if(!['Pending','Verified','Rejected'].includes(status))return res.status(400).json({message:'Invalid KYC status.'});const f=await Fpo.findByIdAndUpdate(req.params.fpoId,{kycStatus:status,kycRejectionReason:status==='Rejected'?(reason||''):''},{new:true});if(!f)return res.status(404).json({message:'FPO not found.'});res.json(f);}catch(e){res.status(500).json({message:e.message});}};
-exports.importFarmersExcel = async(req,res)=>{try{const fpoId=await getFpoIdForUser(req.user._id||req.user.id);if(!fpoId)return res.status(400).json({message:'Associated FPO profile not found.'});if(!req.file)return res.status(400).json({message:'Please upload an Excel file.'});const XLSX=require('xlsx');const wb=XLSX.readFile(req.file.path);const sheet=wb.Sheets[wb.SheetNames[0]];const rows=XLSX.utils.sheet_to_json(sheet);const docs=rows.filter(r=>r.name&&r.phone).map(r=>({fpo:fpoId,name:String(r.name),phone:String(r.phone),aadhaarNumber:r.aadhaarNumber||'',address:r.address||'',bankDetails:{accountNumber:r.accountNumber||'',ifscCode:r.ifscCode||'',bankName:r.bankName||''}}));if(!docs.length)return res.status(400).json({message:'No valid rows found. name and phone are required.'});const created=await Farmer.insertMany(docs,{ordered:false});try{fs.unlinkSync(req.file.path)}catch(_){}res.status(201).json({message:`${created.length} farmers imported successfully.`,farmers:created});}catch(e){try{if(req.file?.path)fs.unlinkSync(req.file.path)}catch(_){}res.status(500).json({message:'Excel import failed.',error:e.message});}};
-exports.getWeeklyReport = async(req,res)=>{try{const fpoId=await getFpoIdForUser(req.user._id||req.user.id);if(!fpoId)return res.json([]);const days=Number(req.query.days)||56;const start=new Date(Date.now()-days*86400000);const batches=await Batch.find({fpo:fpoId,createdAt:{$gte:start}});const orders=await FpoOrder.find({fpo:fpoId,createdAt:{$gte:start},status:{$nin:['Cancelled','Rejected']}});const key=d=>{const x=new Date(d);x.setHours(0,0,0,0);const day=x.getDay();const diff=x.getDate()-day+(day===0?-6:1);x.setDate(diff);return x.toISOString().slice(0,10)};const m={};for(const b of batches){const k=key(b.createdAt);m[k]??={week:k,intakeKg:0,revenue:0};m[k].intakeKg+=b.rawQuantityKg}for(const o of orders){const k=key(o.createdAt);m[k]??={week:k,intakeKg:0,revenue:0};m[k].revenue+=o.totalPrice}res.json(Object.values(m).sort((a,b)=>a.week.localeCompare(b.week)));}catch(e){res.status(500).json({message:e.message});}};
-exports.getFarmerSales = async(req,res)=>{try{const fpoId=await getFpoIdForUser(req.user._id||req.user.id);const farmer=await Farmer.findOne({_id:req.params.farmerId,fpo:fpoId});if(!farmer)return res.status(404).json({message:'Farmer not found.'});const batches=await Batch.find({fpo:fpoId,farmer:farmer._id});const batchIds=batches.map(b=>b._id);const listings=await Listing.find({fpo:fpoId,sourceBatch:{$in:batchIds}});const listingIds=listings.map(l=>l._id);const orders=await FpoOrder.find({fpo:fpoId,listing:{$in:listingIds},status:{$nin:['Cancelled','Rejected']}}).populate('listing','produceType grade pricePerKg');res.json({farmer,batches,listings,orders,totalSoldKg:orders.reduce((s,o)=>s+o.quantityKg,0),salesRevenue:orders.reduce((s,o)=>s+o.totalPrice,0)});}catch(e){res.status(500).json({message:e.message});}};
-exports.completePayout = async(req,res)=>{try{const fpoId=await getFpoIdForUser(req.user._id||req.user.id);const payout=await Payout.findOne({_id:req.params.payoutId,fpo:fpoId});if(!payout)return res.status(404).json({message:'Payout not found.'});if(payout.status==='Completed')return res.status(400).json({message:'Payout already completed.'});payout.status='Completed';payout.transactionId=req.body.transactionId||payout.transactionId||`TXN-${Date.now()}`;payout.paymentDate=new Date();payout.paidAt=new Date();await payout.save();if(payout.batch){const b=await Batch.findOne({_id:payout.batch,fpo:fpoId});if(b){b.payoutStatus='PAID';b.paidAt=new Date();await b.save();}}await Farmer.findByIdAndUpdate(payout.farmer,{$inc:{totalEarnedLifetime:payout.amount}}).catch(()=>{});res.json({message:'Payout completed.',payout});}catch(e){res.status(500).json({message:e.message});}};
+
+exports.updateStaff = async (req, res) => {
+  try {
+    const f = await Fpo.findOne({ adminUser: req.user._id || req.user.id });
+    if (!f || !f.staff.some((x) => x.toString() === req.params.staffId))
+      return res.status(404).json({ message: 'Staff member not found.' });
+    const u = await User.findById(req.params.staffId);
+    if (!u) return res.status(404).json({ message: 'User not found.' });
+    if (req.body.name !== undefined) u.name = req.body.name;
+    if (req.body.location !== undefined) u.location = req.body.location;
+    if (req.body.password) u.password = await bcrypt.hash(req.body.password, 10);
+    await u.save();
+    res.json(u);
+  } catch (e) {
+    res.status(400).json({ message: e.message });
+  }
+};
+
+exports.removeStaff = async (req, res) => {
+  try {
+    const f = await Fpo.findOne({ adminUser: req.user._id || req.user.id });
+    if (!f) return res.status(404).json({ message: 'FPO not found.' });
+    const id = req.params.staffId;
+    if (!f.staff.some((x) => x.toString() === id))
+      return res.status(404).json({ message: 'Staff member not found.' });
+    f.staff = f.staff.filter((x) => x.toString() !== id);
+    await f.save();
+    await User.findOneAndUpdate({ _id: id, role: 'fpo_staff' }, { $set: { role: 'consumer' } });
+    res.json({ message: 'Staff deactivated and removed from FPO.' });
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+};
+
+exports.verifyKyc = async (req, res) => {
+  try {
+    if (req.user.role !== 'admin')
+      return res.status(403).json({ message: 'Only authority admin can verify KYC.' });
+    const { status, reason } = req.body;
+    if (!['Pending', 'Verified', 'Rejected'].includes(status))
+      return res.status(400).json({ message: 'Invalid KYC status.' });
+    const f = await Fpo.findByIdAndUpdate(
+      req.params.fpoId,
+      {
+        kycStatus: status,
+        kycRejectionReason: status === 'Rejected' ? reason || '' : '',
+      },
+      { new: true }
+    );
+    if (!f) return res.status(404).json({ message: 'FPO not found.' });
+    await notify(
+      f._id,
+      'System',
+      status === 'Verified'
+        ? 'Your FPO KYC has been verified by the authority.'
+        : status === 'Rejected'
+          ? `Your FPO KYC was rejected${reason ? `: ${reason}` : '.'}`
+          : 'Your FPO KYC status was set back to Pending.',
+      { kycStatus: status }
+    );
+    res.json(f);
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+};
+
+exports.getWeeklyReport = async (req, res) => {
+  try {
+    const fpoId = await getFpoIdForUser(req.user._id || req.user.id);
+    if (!fpoId) return res.json([]);
+    const days = Number(req.query.days) || 56;
+    const start = new Date(Date.now() - days * 86400000);
+    const batches = await Batch.find({ fpo: fpoId, createdAt: { $gte: start } });
+    const orders = await FpoOrder.find({
+      fpo: fpoId,
+      createdAt: { $gte: start },
+      status: { $nin: ['Cancelled', 'Rejected'] },
+    });
+    const key = (d) => {
+      const x = new Date(d);
+      x.setHours(0, 0, 0, 0);
+      const day = x.getDay();
+      const diff = x.getDate() - day + (day === 0 ? -6 : 1);
+      x.setDate(diff);
+      return x.toISOString().slice(0, 10);
+    };
+    const m = {};
+    for (const b of batches) {
+      const k = key(b.createdAt);
+      m[k] ??= { week: k, intakeKg: 0, revenue: 0 };
+      m[k].intakeKg += b.rawQuantityKg;
+    }
+    for (const o of orders) {
+      const k = key(o.createdAt);
+      m[k] ??= { week: k, intakeKg: 0, revenue: 0 };
+      m[k].revenue += o.totalPrice;
+    }
+    res.json(Object.values(m).sort((a, b) => a.week.localeCompare(b.week)));
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+};
+
+exports.getFarmerSales = async (req, res) => {
+  try {
+    const fpoId = await getFpoIdForUser(req.user._id || req.user.id);
+    const farmer = await Farmer.findOne({ _id: req.params.farmerId, fpo: fpoId });
+    if (!farmer) return res.status(404).json({ message: 'Farmer not found.' });
+    const batches = await Batch.find({ fpo: fpoId, farmer: farmer._id });
+    const batchIds = batches.map((b) => b._id);
+    const listings = await Listing.find({ fpo: fpoId, sourceBatch: { $in: batchIds } });
+    const listingIds = listings.map((l) => l._id);
+    const orders = await FpoOrder.find({
+      fpo: fpoId,
+      listing: { $in: listingIds },
+      status: { $nin: ['Cancelled', 'Rejected'] },
+    }).populate('listing', 'produceType grade pricePerKg');
+    res.json({
+      farmer,
+      batches,
+      listings,
+      orders,
+      totalSoldKg: orders.reduce((s, o) => s + o.quantityKg, 0),
+      salesRevenue: orders.reduce((s, o) => s + o.totalPrice, 0),
+    });
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+};
+
+exports.completePayout = async (req, res) => {
+  try {
+    const fpoId = await getFpoIdForUser(req.user._id || req.user.id);
+    const payout = await Payout.findOne({ _id: req.params.payoutId, fpo: fpoId });
+    if (!payout) return res.status(404).json({ message: 'Payout not found.' });
+    if (payout.status === 'Completed')
+      return res.status(400).json({ message: 'Payout already completed.' });
+    payout.status = 'Completed';
+    payout.transactionId =
+      req.body.transactionId || payout.transactionId || `TXN-${Date.now()}`;
+    payout.paymentDate = new Date();
+    payout.paidAt = new Date();
+    await payout.save();
+    if (payout.batch) {
+      const b = await Batch.findOne({ _id: payout.batch, fpo: fpoId });
+      if (b) {
+        b.payoutStatus = 'PAID';
+        b.paidAt = new Date();
+        await b.save();
+      }
+    }
+    await Farmer.findByIdAndUpdate(payout.farmer, {
+      $inc: { totalEarnedLifetime: payout.amount },
+    }).catch(() => {});
+    res.json({ message: 'Payout completed.', payout });
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+};
+
 exports.listFposForAdmin = async (req, res) => {
   try {
     const filter = req.query.status ? { kycStatus: req.query.status } : {};
     const fpos = await Fpo.find(filter)
-      .select('name registrationNumber registrationType kycStatus kycRejectionReason kycDocuments shareholderFarmerCount contactDetails.district contactDetails.state createdAt')
+      .select(
+        'name registrationNumber registrationType kycStatus kycRejectionReason kycDocuments shareholderFarmerCount contactDetails.district contactDetails.state createdAt'
+      )
       .sort({ createdAt: -1 });
     res.json(fpos);
   } catch (e) {

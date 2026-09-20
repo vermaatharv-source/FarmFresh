@@ -1,10 +1,12 @@
 const express = require('express');
 const router = express.Router();
+const { auditMiddleware } = require('../middleware/auditMiddleware');
+router.use(auditMiddleware);
 const c = require('../controllers/listingController');
 const { protect } = require('../middleware/authMiddleware');
 const { authorizeRoles } = require('../middleware/roleMiddleware');
 const upload = require('../middleware/upload');
-const { requireVerifiedKycToPublish } = require('../middleware/Kycmiddleware');
+const { requireVerifiedKycToPublish } = require('../middleware/kycMiddleware');
 
 // Public routes
 router.get('/public', c.getPublicListings);

@@ -7,6 +7,7 @@ import CartDrawer from '../components/CartDrawer';
 import CheckoutModal from '../components/CheckoutModal';
 import ReviewModal from '../components/ReviewModal';
 import SubscriptionModal from '../components/SubscriptionModal';
+import BrandLogo from '../components/BrandLogo';
 
 export default function FpoListingDetail() {
   const { id } = useParams();
@@ -175,8 +176,7 @@ export default function FpoListingDetail() {
             ← Back
           </button>
           <div className="flex items-center gap-2">
-            <span className="text-xl">🌾</span>
-            <span className="font-bold text-emerald-800">FarmFresh</span>
+            <BrandLogo size="sm" />
           </div>
           <div className="flex items-center gap-2">
             {listing && (
@@ -407,44 +407,12 @@ export default function FpoListingDetail() {
           </div>
         </div>
 
-        {/* Extra Details */}
-        <div className="mt-10 grid md:grid-cols-2 gap-6">
-          <div className="bg-white rounded-xl border p-5">
-            <h3 className="font-semibold text-gray-800 mb-3">About the FPO</h3>
-            <div className="space-y-2 text-sm">
-              <p>
-                <span className="text-gray-500">Name:</span>{' '}
-                <span className="font-medium">{fpo?.name}</span>
-              </p>
-              {fpo?.registrationNumber && (
-                <p>
-                  <span className="text-gray-500">Registration:</span> {fpo.registrationNumber}
-                </p>
-              )}
-              {(fpo?.contactDetails?.district || fpo?.contactDetails?.state) && (
-                <p>
-                  <span className="text-gray-500">Location:</span>{' '}
-                  {[fpo.contactDetails?.district, fpo.contactDetails?.state]
-                    .filter(Boolean)
-                    .join(', ')}
-                </p>
-              )}
-              {fpo?.contactDetails?.phone && (
-                <p>
-                  <span className="text-gray-500">Contact:</span> {fpo.contactDetails.phone}
-                </p>
-              )}
-            </div>
-          </div>
-
-          {batch && (
+        {/* Extra Details — Source & Traceability only */}
+        {batch && (
+          <div className="mt-10 max-w-xl">
             <div className="bg-white rounded-xl border p-5">
               <h3 className="font-semibold text-gray-800 mb-3">Source & Traceability</h3>
               <div className="space-y-2 text-sm">
-                <p>
-                  <span className="text-gray-500">Batch ID:</span>{' '}
-                  <span className="font-mono font-medium">{batch.batchId}</span>
-                </p>
                 {batch.farmer && (
                   <p>
                     <span className="text-gray-500">Farmer:</span> {batch.farmer.name}
@@ -476,17 +444,19 @@ export default function FpoListingDetail() {
                   </p>
                 )}
                 {(batch.batchId || batch._id) && (
-                  <Link
-                    to={`/trace/${batch.batchId || batch._id}`}
-                    className="inline-block mt-2 text-emerald-700 font-medium text-sm hover:underline"
+                  <a
+                    href={`/trace/${batch.batchId || batch._id}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-block mt-2 text-emerald-700 font-medium hover:underline text-sm"
                   >
                     View Full Traceability Passport →
-                  </Link>
+                  </a>
                 )}
               </div>
             </div>
-          )}
-        </div>
+          </div>
+        )}
 
         {/* Customer Reviews & Farm Quality Section */}
         <div id="customer-reviews" className="mt-8 bg-white rounded-xl border p-6 space-y-6">

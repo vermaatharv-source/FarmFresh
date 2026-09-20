@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import API from '../api/axios';
 import { useAuth } from '../context/AuthContext';
+import BrandLogo from '../components/BrandLogo';
 
 function Register() {
   const [formData, setFormData] = useState({
@@ -90,7 +91,7 @@ function Register() {
         <div className="w-full max-w-md">
           <div className="lg:hidden text-center mb-8">
             <div className="text-4xl mb-2">🌱</div>
-            <h1 className="text-2xl font-bold text-green-700">FarmFresh</h1>
+            <BrandLogo size="lg" className="mx-auto mb-2" />
           </div>
 
           <h2 className="text-2xl font-bold text-gray-900 mb-1">Create your account</h2>

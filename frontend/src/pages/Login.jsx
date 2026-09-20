@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import API from '../api/axios';
 import { useAuth } from '../context/AuthContext';
+import BrandLogo from '../components/BrandLogo';
 
 function Login() {
   const [formData, setFormData] = useState({ email: '', password: '' });
@@ -20,13 +21,15 @@ function Login() {
     setLoading(true);
     try {
       const res = await API.post('/auth/login', formData);
-      
+
       // Save user and token to Context/LocalStorage
       login(res.data.user, res.data.token);
 
       // Route based on role
       const role = res.data.user.role;
-      if (role === 'fpo_admin' || role === 'fpo_staff') {
+      if (role === 'admin') {
+        navigate('/admin/dashboard');
+      } else if (role === 'fpo_admin' || role === 'fpo_staff') {
         navigate('/fpo/dashboard');
       } else {
         navigate('/consumer-dashboard');
@@ -47,7 +50,7 @@ function Login() {
           <div className="absolute bottom-0 right-0 w-80 h-80 bg-yellow-300 rounded-full blur-3xl"></div>
         </div>
         <div className="relative z-10 flex flex-col justify-center px-16 text-white">
-          <div className="text-6xl mb-6">🌾</div>
+          <BrandLogo size="xl" className="mb-6 drop-shadow-sm" />
           <h1 className="text-5xl font-extrabold leading-tight mb-4">FarmFresh</h1>
           <p className="text-xl text-green-50 max-w-md">
             Fresh, traceable produce from Farmer Producer Organizations, straight to your table. No markups, full transparency.
@@ -69,8 +72,7 @@ function Login() {
       <div className="flex-1 flex items-center justify-center bg-gray-50 px-6 py-12">
         <div className="w-full max-w-sm">
           <div className="lg:hidden text-center mb-8">
-            <div className="text-4xl mb-2">🌾</div>
-            <h1 className="text-2xl font-bold text-green-700">FarmFresh</h1>
+            <BrandLogo size="lg" className="mx-auto mb-2" />
           </div>
 
           <h2 className="text-2xl font-bold text-gray-900 mb-1">Welcome back</h2>

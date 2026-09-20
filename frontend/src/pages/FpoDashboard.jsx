@@ -1,1567 +1,1206 @@
-import React, { useState, useEffect } from 'react';
+import BrandLogo from '../components/BrandLogo';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import API from '../api/axios';
+import { useAuth } from '../context/AuthContext';
 import FpoCompletionPanel from '../components/FpoCompletionPanel';
 
+const NAV = [
+  { id: 'analytics', label: 'Overview' },
+  { id: 'farmers', label: 'Farmers' },
+  { id: 'intake', label: 'Intake & Grading' },
+  { id: 'inventory', label: 'Inventory' },
+  { id: 'listings', label: 'Listings' },
+  { id: 'orders', label: 'Orders' },
+  { id: 'payouts', label: 'Payouts' },
+  { id: 'reports', label: 'Reports' },
+  { id: 'audit', label: 'Audit Log' },
+  { id: 'settings', label: 'Profile & KYC' },
+  { id: 'completion', label: 'Compliance' },
+];
+
+const kycBadge = (status) => {
+  if (status === 'Verified')
+    return 'bg-emerald-100 text-emerald-800 border-emerald-200';
+  if (status === 'Rejected') return 'bg-red-100 text-red-800 border-red-200';
+  return 'bg-amber-100 text-amber-800 border-amber-200';
+};
+
 export default function FpoDashboard() {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('analytics');
+  const [fpoProfile, setFpoProfile] = useState(undefined);
   const [analytics, setAnalytics] = useState({});
   const [farmers, setFarmers] = useState([]);
   const [batches, setBatches] = useState([]);
   const [inventory, setInventory] = useState([]);
   const [payouts, setPayouts] = useState([]);
+  const [listings, setListings] = useState([]);
+  const [fpoOrders, setFpoOrders] = useState([]);
+  const [activityLogs, setActivityLogs] = useState([]);
+  const [msg, setMsg] = useState('');
+  const [err, setErr] = useState('');
 
-  const [fpoProfile, setFpoProfile] = useState(undefined); // undefined = loading, null = none yet
-  const [profileForm, setProfileForm] = useState({
+  // Farmer form (govt fields)
+  const [farmerForm, setFarmerForm] = useState({
     name: '',
-    registrationNumber: '',
     phone: '',
-    email: '',
+    aadhaarNumber: '',
+    village: '',
+    block: '',
+    district: '',
+    state: '',
     address: '',
+    landHoldingAcres: '',
+    cropsGrown: '',
+    gender: '',
+    category: '',
+    memberId: '',
+    joiningDate: '',
+    accountNumber: '',
+    ifscCode: '',
+    bankName: '',
   });
+  const [csvFile, setCsvFile] = useState(null);
 
-  // Forms State
-  const [farmerForm, setFarmerForm] = useState({ name: '', phone: '', address: '', aadhaarNumber: '' });
-  const [intakeForm, setIntakeForm] = useState({ farmerId: '', produceType: '', rawQuantityKg: '', harvestDate: '' });
+  // Intake / grading / payout (kept compatible with existing APIs)
+  const [intakeForm, setIntakeForm] = useState({
+    farmerId: '',
+    produceType: '',
+    rawQuantityKg: '',
+    harvestDate: '',
+  });
   const [gradingForm, setGradingForm] = useState({
     batchId: '',
     gradeA_Kg: 0,
     gradeB_Kg: 0,
     gradeC_Kg: 0,
-    qualityScore: 8.5,
+    qualityScore: 80,
     status: 'Approved',
   });
-  const [gradingImages, setGradingImages] = useState([]);
-  const [payoutForm, setPayoutForm] = useState({ farmerId: '', batchId: '', amount: '', transactionId: '' });
-
-  // CSV bulk import
-  const [csvFile, setCsvFile] = useState(null);
-  const [csvUploading, setCsvUploading] = useState(false);
-  const [csvResult, setCsvResult] = useState('');
-
-  // KYC + Staff (Settings tab)
+  const [payoutForm, setPayoutForm] = useState({
+    farmerId: '',
+    batchId: '',
+    amount: '',
+    transactionId: '',
+  });
+  const [listingForm, setListingForm] = useState({
+    produceType: '',
+    grade: 'A',
+    pricePerKg: '',
+    availableQuantityKg: '',
+    minOrderQtyKg: 1,
+    description: '',
+    sourceBatch: '',
+  });
   const [kycFiles, setKycFiles] = useState([]);
-  const [kycUploading, setKycUploading] = useState(false);
   const [staffForm, setStaffForm] = useState({ name: '', email: '', password: '', location: '' });
 
-  // NEW: Listings (linked to Inventory)
-  const [listings, setListings] = useState([]);
-  const [listingForm, setListingForm] = useState({ produceType: '', grade: 'A', pricePerKg: '', availableQuantityKg: '', minOrderQtyKg: 1, description: '', sourceBatch: '' });
-  const [listingImages, setListingImages] = useState([]);
+  const flash = (t, isErr = false) => {
+    if (isErr) setErr(t);
+    else setMsg(t);
+    setTimeout(() => {
+      setMsg('');
+      setErr('');
+    }, 3000);
+  };
 
-  // NEW: FPO Orders (consumer orders against listings)
-  const [fpoOrders, setFpoOrders] = useState([]);
-  const [cancelReason, setCancelReason] = useState({});
-
-  // NEW: Reports
-  const [salesReport, setSalesReport] = useState({ totalRevenue: 0, bestSelling: [], gradeDistribution: [] });
-  const [farmerPerformance, setFarmerPerformance] = useState([]);
-  const [monthlyReport, setMonthlyReport] = useState([]);
-  const [settlement, setSettlement] = useState({ totalEarnings: 0, orders: [] });
-
-  // NEW: Notifications
-  const [notifications, setNotifications] = useState([]);
-  const [showNotifications, setShowNotifications] = useState(false);
-
-  // NEW: Stock movements + low stock (Inventory tab)
-  const [stockMovements, setStockMovements] = useState([]);
-  const [lowStockAlerts, setLowStockAlerts] = useState([]);
-
-  // NEW: Farmer detail modal
-  const [farmerDetail, setFarmerDetail] = useState(null);
-
-  useEffect(() => {
-    fetchProfile();
-  }, []);
-
-  useEffect(() => {
-    if (fpoProfile) {
-      fetchAnalytics();
-      fetchFarmers();
-      fetchBatches();
-      fetchInventory();
-      fetchPayouts();
-      fetchListings();
-      fetchFpoOrders();
-      fetchNotifications();
-      fetchStockMovements();
-      fetchLowStockAlerts();
-      fetchSalesReport();
-      fetchFarmerPerformance();
-      fetchMonthlyReport();
-      fetchSettlement();
-    }
-  }, [fpoProfile]);
-
-  const fetchProfile = async () => {
+  const loadProfile = useCallback(async () => {
     try {
       const res = await API.get('/fpo/profile');
-      setFpoProfile(res.data); // null if none exists yet
-    } catch (err) {
-      console.error('Error fetching FPO profile:', err);
+      setFpoProfile(res.data);
+    } catch {
       setFpoProfile(null);
     }
+  }, []);
+
+  const loadAll = useCallback(async () => {
+    try {
+      const [a, f, b, inv, p, l, o] = await Promise.all([
+        API.get('/fpo/analytics').catch(() => ({ data: {} })),
+        API.get('/fpo/farmers').catch(() => ({ data: [] })),
+        API.get('/fpo/batches').catch(() => ({ data: [] })),
+        API.get('/fpo/inventory').catch(() => ({ data: [] })),
+        API.get('/fpo/payouts').catch(() => ({ data: [] })),
+        API.get('/listings/mine').catch(() => ({ data: [] })),
+        API.get('/fpo-orders/fpo').catch(() => ({ data: [] })),
+      ]);
+      setAnalytics(a.data || {});
+      setFarmers(f.data || []);
+      setBatches(b.data || []);
+      setInventory(inv.data || []);
+      setPayouts(p.data || []);
+      setListings(l.data || []);
+      setFpoOrders(o.data || []);
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
+  const loadAudit = async () => {
+    try {
+      const res = await API.get('/fpo/activity-logs');
+      setActivityLogs(res.data || []);
+    } catch {
+      setActivityLogs([]);
+    }
   };
 
-  const handleRegisterFpo = async (e) => {
+  useEffect(() => {
+    loadProfile();
+    loadAll();
+  }, [loadProfile, loadAll]);
+
+  useEffect(() => {
+    if (activeTab === 'audit') loadAudit();
+  }, [activeTab]);
+
+  const handleLogout = () => {
+    logout();
+    navigate('/login');
+  };
+
+  // —— Farmers ——
+  const submitFarmer = async (e) => {
     e.preventDefault();
     try {
-      const res = await API.post('/fpo/register', {
-        name: profileForm.name,
-        registrationNumber: profileForm.registrationNumber,
-        contactDetails: {
-          phone: profileForm.phone,
-          email: profileForm.email,
-          address: profileForm.address,
+      await API.post('/fpo/farmers', {
+        ...farmerForm,
+        landHoldingAcres: Number(farmerForm.landHoldingAcres) || 0,
+        bankDetails: {
+          accountNumber: farmerForm.accountNumber,
+          ifscCode: farmerForm.ifscCode,
+          bankName: farmerForm.bankName,
         },
       });
-      setFpoProfile(res.data.fpo);
-    } catch (err) {
-      alert(err.response?.data?.message || 'Error registering FPO');
+      flash('Farmer registered');
+      setFarmerForm({
+        name: '',
+        phone: '',
+        aadhaarNumber: '',
+        village: '',
+        block: '',
+        district: '',
+        state: '',
+        address: '',
+        landHoldingAcres: '',
+        cropsGrown: '',
+        gender: '',
+        category: '',
+        memberId: '',
+        joiningDate: '',
+        accountNumber: '',
+        ifscCode: '',
+        bankName: '',
+      });
+      loadAll();
+    } catch (e) {
+      flash(e.response?.data?.message || 'Failed to add farmer', true);
     }
   };
 
-  const fetchAnalytics = async () => {
-    try {
-      const res = await API.get('/fpo/analytics');
-      setAnalytics(res.data);
-    } catch (err) {
-      console.error('Error fetching analytics:', err);
-    }
-  };
-
-  const fetchFarmers = async () => {
-    try {
-      const res = await API.get('/fpo/farmers');
-      setFarmers(res.data);
-    } catch (err) {
-      console.error('Error fetching farmers:', err);
-    }
-  };
-
-  const fetchBatches = async () => {
-    try {
-      const res = await API.get('/fpo/batches');
-      setBatches(res.data);
-    } catch (err) {
-      console.error('Error fetching batches:', err);
-    }
-  };
-
-  const fetchInventory = async () => {
-    try {
-      const res = await API.get('/fpo/inventory');
-      setInventory(res.data);
-    } catch (err) {
-      console.error('Error fetching inventory:', err);
-    }
-  };
-
-  const fetchPayouts = async () => {
-    try {
-      const res = await API.get('/fpo/payouts');
-      setPayouts(res.data);
-    } catch (err) {
-      console.error('Error fetching payouts:', err);
-    }
-  };
-
-  // ===== NEW: Listings =====
-  const fetchListings = async () => {
-    try {
-      const res = await API.get('/listings/mine');
-      setListings(res.data);
-    } catch (err) {
-      console.error('Error fetching listings:', err);
-    }
-  };
-
-  const handleCreateListing = async (e) => {
-    e.preventDefault();
-    try {
-      const form = new FormData();
-      Object.entries({ ...listingForm, pricePerKg: Number(listingForm.pricePerKg), availableQuantityKg: Number(listingForm.availableQuantityKg), minOrderQtyKg: Number(listingForm.minOrderQtyKg) || 1 }).forEach(([k,v]) => { if (v !== '' && v !== undefined) form.append(k, v); });
-      listingImages.forEach((file) => form.append('images', file));
-      await API.post('/listings', form, { headers: { 'Content-Type': 'multipart/form-data' } });
-      setListingForm({ produceType: '', grade: 'A', pricePerKg: '', availableQuantityKg: '', minOrderQtyKg: 1, description: '', sourceBatch: '' });
-      setListingImages([]);
-      fetchListings();
-      fetchInventory();
-    } catch (err) {
-      alert(err.response?.data?.message || 'Error creating listing');
-    }
-  };
-
-  const handleSetListingStatus = async (id, status) => {
-    try {
-      await API.patch(`/listings/${id}/status`, { status });
-      fetchListings();
-    } catch (err) {
-      alert(err.response?.data?.message || 'Error updating listing status');
-    }
-  };
-
-  const handleDeleteListing = async (id) => {
-    if (!window.confirm('Delete this listing? Reserved stock will be released back to inventory.')) return;
-    try {
-      await API.delete(`/listings/${id}`);
-      fetchListings();
-      fetchInventory();
-    } catch (err) {
-      alert(err.response?.data?.message || 'Error deleting listing');
-    }
-  };
-
-  // ===== NEW: FPO Orders (incoming, from consumers) =====
-  const fetchFpoOrders = async () => {
-    try {
-      const res = await API.get('/fpo-orders/fpo');
-      setFpoOrders(res.data);
-    } catch (err) {
-      console.error('Error fetching FPO orders:', err);
-    }
-  };
-
-  const handleUpdateOrderStatus = async (id, status) => {
-    try {
-      await API.patch(`/fpo-orders/${id}/status`, { status });
-      fetchFpoOrders();
-    } catch (err) {
-      alert(err.response?.data?.message || 'Error updating order status');
-    }
-  };
-
-  const handleCancelOrder = async (id) => {
-    try {
-      await API.patch(`/fpo-orders/${id}/cancel`, { reason: cancelReason[id] || '' });
-      setCancelReason({ ...cancelReason, [id]: '' });
-      fetchFpoOrders();
-      fetchListings();
-      fetchInventory();
-    } catch (err) {
-      alert(err.response?.data?.message || 'Error cancelling order');
-    }
-  };
-
-  // ===== NEW: Notifications =====
-  const fetchNotifications = async () => {
-    try {
-      const res = await API.get('/notifications');
-      setNotifications(res.data);
-    } catch (err) {
-      console.error('Error fetching notifications:', err);
-    }
-  };
-
-  const handleMarkNotificationRead = async (id) => {
-    try {
-      await API.patch(`/notifications/${id}/read`);
-      fetchNotifications();
-    } catch (err) {
-      console.error('Error marking notification read:', err);
-    }
-  };
-
-  const handleMarkAllRead = async () => {
-    try {
-      await API.patch('/notifications/read-all');
-      fetchNotifications();
-    } catch (err) {
-      console.error('Error marking all notifications read:', err);
-    }
-  };
-
-  // ===== NEW: Inventory movements + low stock =====
-  const fetchStockMovements = async () => {
-    try {
-      const res = await API.get('/fpo/inventory/movements');
-      setStockMovements(res.data);
-    } catch (err) {
-      console.error('Error fetching stock movements:', err);
-    }
-  };
-
-  const fetchLowStockAlerts = async () => {
-    try {
-      const res = await API.get('/fpo/inventory/low-stock');
-      setLowStockAlerts(res.data);
-    } catch (err) {
-      console.error('Error fetching low stock alerts:', err);
-    }
-  };
-
-  // ===== NEW: Reports =====
-  const fetchSalesReport = async () => {
-    try {
-      const res = await API.get('/reports/sales');
-      setSalesReport(res.data);
-    } catch (err) {
-      console.error('Error fetching sales report:', err);
-    }
-  };
-
-  const fetchFarmerPerformance = async () => {
-    try {
-      const res = await API.get('/reports/farmer-performance');
-      setFarmerPerformance(res.data);
-    } catch (err) {
-      console.error('Error fetching farmer performance:', err);
-    }
-  };
-
-  const fetchMonthlyReport = async () => {
-    try {
-      const res = await API.get('/reports/monthly');
-      setMonthlyReport(res.data);
-    } catch (err) {
-      console.error('Error fetching monthly report:', err);
-    }
-  };
-
-  const fetchSettlement = async () => {
-    try {
-      const res = await API.get('/reports/settlement');
-      setSettlement(res.data);
-    } catch (err) {
-      console.error('Error fetching settlement:', err);
-    }
-  };
-
-  const handleDownloadPayoutReport = async () => {
-    try {
-      const res = await API.get('/reports/payouts/download', { responseType: 'blob' });
-      const url = window.URL.createObjectURL(new Blob([res.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', 'payout_report.csv');
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-    } catch (err) {
-      alert('Error downloading payout report');
-    }
-  };
-
-  // ===== NEW: Farmer verification + detail =====
-  const handleToggleFarmerVerification = async (farmerId) => {
-    try {
-      await API.patch(`/fpo/farmers/${farmerId}/verify`);
-      fetchFarmers();
-    } catch (err) {
-      alert(err.response?.data?.message || 'Error updating verification');
-    }
-  };
-
-  const openFarmerDetail = async (farmerId) => {
-    try {
-      const res = await API.get(`/fpo/farmers/${farmerId}`);
-      setFarmerDetail(res.data);
-    } catch (err) {
-      alert(err.response?.data?.message || 'Error loading farmer detail');
-    }
-  };
-
-  const handleAddFarmer = async (e) => {
-    e.preventDefault();
-    try {
-      await API.post('/fpo/farmers', farmerForm);
-      setFarmerForm({ name: '', phone: '', address: '', aadhaarNumber: '' });
-      fetchFarmers();
-      fetchAnalytics();
-    } catch (err) {
-      alert(err.response?.data?.message || 'Error adding farmer');
-    }
-  };
-
-  // NEW: wired up to the existing PATCH /fpo/farmers/:farmerId/status endpoint
-  const handleToggleFarmerStatus = async (farmerId) => {
-    try {
-      await API.patch(`/fpo/farmers/${farmerId}/status`);
-      fetchFarmers();
-    } catch (err) {
-      alert(err.response?.data?.message || 'Error updating farmer status');
-    }
-  };
-
-  // NEW: wired up to the existing POST /fpo/farmers/import-csv endpoint
-  const handleCsvImport = async (e) => {
-    e.preventDefault();
+  const importFarmers = async () => {
     if (!csvFile) return;
-    setCsvUploading(true);
-    setCsvResult('');
+    const fd = new FormData();
+    fd.append('file', csvFile);
     try {
-      const form = new FormData();
-      form.append('file', csvFile);
-      const res = await API.post('/fpo/farmers/import-csv', form, {
+      const res = await API.post('/fpo/farmers/import', fd, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
-      setCsvResult(res.data.message || 'Import complete');
+      flash(res.data.message || 'Import complete');
       setCsvFile(null);
-      fetchFarmers();
-      fetchAnalytics();
-    } catch (err) {
-      setCsvResult(err.response?.data?.message || 'Error importing CSV');
-    } finally {
-      setCsvUploading(false);
+      loadAll();
+    } catch (e) {
+      flash(e.response?.data?.message || 'Import failed', true);
     }
   };
 
-  const handleCreateIntake = async (e) => {
+  // —— Intake ——
+  const submitIntake = async (e) => {
     e.preventDefault();
     try {
-      await API.post('/fpo/batches/intake', intakeForm);
-      setIntakeForm({ farmerId: '', produceType: '', rawQuantityKg: '', harvestDate: '' });
-      fetchBatches();
-      fetchAnalytics();
-    } catch (err) {
-      alert(err.response?.data?.message || 'Error recording intake');
-    }
-  };
-
-  // UPDATED: now sends multipart/form-data so quality images actually reach
-  // the existing upload.array('qualityImages', 5) middleware, and includes
-  // the status dropdown (Approved/Rejected/Pending) instead of always
-  // sending "Approved".
-  const handleGradeBatch = async (e) => {
-    e.preventDefault();
-    try {
-      const form = new FormData();
-      form.append('gradeA_Kg', Number(gradingForm.gradeA_Kg));
-      form.append('gradeB_Kg', Number(gradingForm.gradeB_Kg));
-      form.append('gradeC_Kg', Number(gradingForm.gradeC_Kg));
-      form.append('qualityScore', Number(gradingForm.qualityScore));
-      form.append('status', gradingForm.status);
-      gradingImages.forEach((file) => form.append('qualityImages', file));
-
-      await API.patch(`/fpo/batches/${gradingForm.batchId}/grade`, form, {
-        headers: { 'Content-Type': 'multipart/form-data' },
+      await API.post('/fpo/batches/intake', {
+        ...intakeForm,
+        rawQuantityKg: Number(intakeForm.rawQuantityKg),
       });
-
-      alert('Batch graded successfully! Inventory updated.');
-      setGradingForm({ batchId: '', gradeA_Kg: 0, gradeB_Kg: 0, gradeC_Kg: 0, qualityScore: 8.5, status: 'Approved' });
-      setGradingImages([]);
-      fetchBatches();
-      fetchInventory();
-      fetchAnalytics();
-    } catch (err) {
-      alert(err.response?.data?.message || 'Error updating batch grade');
+      flash('Intake recorded');
+      setIntakeForm({ farmerId: '', produceType: '', rawQuantityKg: '', harvestDate: '' });
+      loadAll();
+    } catch (e) {
+      flash(e.response?.data?.message || 'Intake failed', true);
     }
   };
 
-  const handleCreatePayout = async (e) => {
+  const submitGrading = async (e) => {
+    e.preventDefault();
+    try {
+      await API.patch(`/fpo/batches/${gradingForm.batchId}/grade`, {
+        gradeA_Kg: Number(gradingForm.gradeA_Kg),
+        gradeB_Kg: Number(gradingForm.gradeB_Kg),
+        gradeC_Kg: Number(gradingForm.gradeC_Kg),
+        qualityScore: Number(gradingForm.qualityScore),
+        status: gradingForm.status,
+      });
+      flash('Grading saved');
+      loadAll();
+    } catch (e) {
+      flash(e.response?.data?.message || 'Grading failed', true);
+    }
+  };
+
+  // —— Payout ——
+  const submitPayout = async (e) => {
     e.preventDefault();
     try {
       await API.post('/fpo/payouts', {
-        ...payoutForm,
+        farmerId: payoutForm.farmerId,
+        batchId: payoutForm.batchId || undefined,
         amount: Number(payoutForm.amount),
+        transactionId: payoutForm.transactionId,
       });
+      flash('Payout recorded');
       setPayoutForm({ farmerId: '', batchId: '', amount: '', transactionId: '' });
-      fetchPayouts();
-      fetchAnalytics();
-    } catch (err) {
-      alert(err.response?.data?.message || 'Error recording payout');
+      loadAll();
+    } catch (e) {
+      flash(e.response?.data?.message || 'Payout failed (KYC may be required)', true);
     }
   };
 
-  // NEW: wired up to the existing POST /fpo/kyc endpoint (upload.array('documents', 5))
-  const handleKycUpload = async (e) => {
+  // —— Listing ——
+  const submitListing = async (e) => {
     e.preventDefault();
-    if (kycFiles.length === 0) return;
-    setKycUploading(true);
     try {
-      const form = new FormData();
-      kycFiles.forEach((file) => form.append('documents', file));
-      const res = await API.post('/fpo/kyc', form, {
-        headers: { 'Content-Type': 'multipart/form-data' },
+      await API.post('/listings', {
+        ...listingForm,
+        pricePerKg: Number(listingForm.pricePerKg),
+        availableQuantityKg: Number(listingForm.availableQuantityKg),
+        minOrderQtyKg: Number(listingForm.minOrderQtyKg) || 1,
       });
-      setFpoProfile(res.data.fpo);
-      setKycFiles([]);
-      alert('KYC documents uploaded. Status: ' + res.data.fpo.kycStatus);
-    } catch (err) {
-      alert(err.response?.data?.message || 'Error uploading KYC documents');
-    } finally {
-      setKycUploading(false);
+      flash('Listing created (draft)');
+      loadAll();
+    } catch (e) {
+      flash(e.response?.data?.message || 'Listing failed', true);
     }
   };
 
-  // NEW: wired up to the existing POST /fpo/staff endpoint
-  const handleAddStaff = async (e) => {
+  const setListingStatus = async (id, status) => {
+    try {
+      await API.patch(`/listings/${id}/status`, { status });
+      flash(`Listing ${status.toLowerCase()}`);
+      loadAll();
+    } catch (e) {
+      flash(e.response?.data?.message || 'Status update failed (KYC required to publish)', true);
+    }
+  };
+
+  // —— KYC ——
+  const uploadKyc = async () => {
+    if (!kycFiles.length) return;
+    const fd = new FormData();
+    kycFiles.forEach((f) => fd.append('documents', f));
+    try {
+      await API.post('/fpo/kyc', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+      flash('KYC documents uploaded');
+      setKycFiles([]);
+      loadProfile();
+    } catch (e) {
+      flash(e.response?.data?.message || 'KYC upload failed', true);
+    }
+  };
+
+  const addStaff = async (e) => {
     e.preventDefault();
     try {
       await API.post('/fpo/staff', staffForm);
+      flash('Staff member added');
       setStaffForm({ name: '', email: '', password: '', location: '' });
-      fetchProfile(); // refresh profile so the new staff shows in the populated list
-      alert('Staff member added successfully.');
-    } catch (err) {
-      alert(err.response?.data?.message || 'Error adding staff member');
+      loadProfile();
+    } catch (e) {
+      flash(e.response?.data?.message || 'Failed to add staff', true);
     }
   };
 
-  // --- Loading state while we check for an existing FPO profile ---
+  const downloadPayoutCsv = async () => {
+    try {
+      const res = await API.get('/reports/payouts/download', { responseType: 'blob' });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'payout_report.csv';
+      a.click();
+    } catch {
+      flash('Download failed', true);
+    }
+  };
+
+  const printFarmerStatement = (farmer) => {
+    const related = payouts.filter(
+      (p) => (p.farmer?._id || p.farmer) === farmer._id || p.farmer === farmer._id
+    );
+    const w = window.open('', '_blank');
+    w.document.write(`<!DOCTYPE html><html><head><title>Payment Statement</title>
+      <style>
+        body{font-family:Georgia,serif;padding:40px;color:#111}
+        h1{font-size:18px;margin:0}
+        .meta{font-size:12px;color:#444;margin:8px 0 24px}
+        table{width:100%;border-collapse:collapse;font-size:12px}
+        th,td{border:1px solid #ccc;padding:8px;text-align:left}
+        th{background:#f5f5f5}
+        .foot{margin-top:32px;font-size:11px;color:#666}
+        .hdr{display:flex;justify-content:space-between;border-bottom:2px solid #065f46;padding-bottom:12px;margin-bottom:16px}
+      </style></head><body>
+      <div class="hdr">
+        <div>
+          <h1>${fpoProfile?.name || 'FPO'}</h1>
+          <div class="meta">Reg. No: ${fpoProfile?.registrationNumber || '—'} · KYC: ${fpoProfile?.kycStatus || '—'}</div>
+        </div>
+        <div style="text-align:right;font-size:12px">Farmer Payment Statement<br/>Generated ${new Date().toLocaleDateString()}</div>
+      </div>
+      <p><strong>Farmer:</strong> ${farmer.name} &nbsp; <strong>Phone:</strong> ${farmer.phone}<br/>
+      <strong>Member ID:</strong> ${farmer.memberId || '—'} &nbsp; <strong>Village:</strong> ${farmer.village || '—'}</p>
+      <table><thead><tr><th>Date</th><th>Batch</th><th>Amount (₹)</th><th>Method</th><th>Txn ID</th><th>Status</th></tr></thead>
+      <tbody>
+      ${related.length ? related.map((p) => `<tr>
+        <td>${p.paidAt || p.paymentDate ? new Date(p.paidAt || p.paymentDate).toLocaleDateString() : '—'}</td>
+        <td>${p.batch?.batchId || '—'}</td>
+        <td>${p.amount || p.totalAmount || 0}</td>
+        <td>${p.paymentMethod || '—'}</td>
+        <td>${p.transactionId || '—'}</td>
+        <td>${p.status}</td>
+      </tr>`).join('') : '<tr><td colspan="6">No payouts recorded</td></tr>'}
+      </tbody></table>
+      <p class="foot">This statement is system-generated for compliance and farmer records. Bank account numbers are not printed in full.</p>
+      <script>window.print()</script></body></html>`);
+    w.document.close();
+  };
+
   if (fpoProfile === undefined) {
     return (
-      <div className="flex h-screen items-center justify-center bg-gray-50 text-gray-500">
-        Loading FPO dashboard...
-      </div>
-    );
-  }
-
-  // --- Registration gate: no FPO profile yet, show the onboarding form ---
-  if (fpoProfile === null) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-gray-50">
-        <form
-          onSubmit={handleRegisterFpo}
-          className="bg-white p-8 rounded-xl shadow-sm border border-gray-100 w-full max-w-md space-y-4"
-        >
-          <h2 className="text-xl font-bold text-gray-800">Register your FPO</h2>
-          <p className="text-sm text-gray-500">
-            We couldn't find an FPO profile linked to your account yet. Fill this in to get started.
-          </p>
-          <input
-            type="text"
-            placeholder="FPO Name"
-            value={profileForm.name}
-            onChange={(e) => setProfileForm({ ...profileForm, name: e.target.value })}
-            className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
-            required
-          />
-          <input
-            type="text"
-            placeholder="Registration Number"
-            value={profileForm.registrationNumber}
-            onChange={(e) => setProfileForm({ ...profileForm, registrationNumber: e.target.value })}
-            className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
-            required
-          />
-          <input
-            type="text"
-            placeholder="Contact Phone"
-            value={profileForm.phone}
-            onChange={(e) => setProfileForm({ ...profileForm, phone: e.target.value })}
-            className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
-            required
-          />
-          <input
-            type="email"
-            placeholder="Contact Email"
-            value={profileForm.email}
-            onChange={(e) => setProfileForm({ ...profileForm, email: e.target.value })}
-            className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
-            required
-          />
-          <input
-            type="text"
-            placeholder="Address"
-            value={profileForm.address}
-            onChange={(e) => setProfileForm({ ...profileForm, address: e.target.value })}
-            className="w-full p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
-            required
-          />
-          <button className="w-full bg-emerald-600 text-white py-2.5 rounded-lg font-medium hover:bg-emerald-700 transition">
-            Register FPO
-          </button>
-        </form>
+      <div className="min-h-screen flex items-center justify-center bg-slate-100 text-slate-600">
+        Loading FPO portal…
       </div>
     );
   }
 
   return (
-    <div className="flex h-screen bg-gray-50">
-      {/* Sidebar Navigation */}
-      <aside className="w-64 bg-emerald-900 text-white flex flex-col">
-        <div className="p-6 text-2xl font-bold border-b border-emerald-800 flex items-center gap-2">
-          <span>🌱</span> FarmFresh FPO
+    <div className="h-screen flex overflow-hidden bg-slate-100">
+      {/* Sidebar — fixed height, logout always visible at bottom */}
+      <aside className="w-64 h-full bg-slate-900 text-slate-100 flex flex-col shrink-0 overflow-hidden">
+        <div className="px-5 py-5 border-b border-slate-700">
+          <BrandLogo size="sm" className="mb-3" />
+          <p className="text-[10px] uppercase tracking-[0.2em] text-slate-400">FPO Portal</p>
+          <h1 className="text-sm font-semibold mt-1 leading-snug line-clamp-2">
+            {fpoProfile?.name || 'Register your FPO'}
+          </h1>
+          {fpoProfile?.registrationNumber && (
+            <p className="text-[11px] text-slate-400 mt-1 font-mono">
+              {fpoProfile.registrationNumber}
+            </p>
+          )}
+          {fpoProfile && (
+            <span
+              className={`inline-block mt-2 text-[10px] font-semibold px-2 py-0.5 rounded border ${kycBadge(
+                fpoProfile.kycStatus
+              )}`}
+            >
+              KYC {fpoProfile.kycStatus}
+            </span>
+          )}
         </div>
-        <nav className="flex-1 p-4 space-y-2">
-          {['analytics', 'farmers', 'intake', 'inventory', 'listings', 'orders', 'payouts', 'reports', 'settings', 'completion'].map((tab) => (
+
+        <nav className="flex-1 py-3 overflow-y-auto">
+          {NAV.map((item) => (
             <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`w-full text-left px-4 py-2.5 rounded-lg font-medium transition-colors ${
-                activeTab === tab ? 'bg-emerald-600 text-white' : 'hover:bg-emerald-800 text-emerald-100'
+              key={item.id}
+              onClick={() => setActiveTab(item.id)}
+              className={`w-full text-left px-5 py-2.5 text-sm transition ${
+                activeTab === item.id
+                  ? 'bg-emerald-700 text-white'
+                  : 'text-slate-300 hover:bg-slate-800 hover:text-white'
               }`}
             >
-              {tab.charAt(0).toUpperCase() + tab.slice(1)}
+              {item.label}
             </button>
           ))}
         </nav>
+
+        <div className="border-t border-slate-700 p-4 space-y-2">
+          <p className="text-xs text-slate-400 truncate">{user?.name}</p>
+          <p className="text-[10px] text-slate-500 uppercase">{user?.role?.replace('_', ' ')}</p>
+          <button
+            onClick={handleLogout}
+            className="w-full mt-2 bg-slate-800 hover:bg-slate-700 text-sm py-2 rounded border border-slate-600"
+          >
+            Logout
+          </button>
+        </div>
       </aside>
 
-      {/* Main Content Area */}
-      <main className="flex-1 overflow-y-auto p-8">
-        {/* NEW: Notification bell — floats top-right of every tab */}
-        <div className="flex justify-end mb-4 relative">
-          <button
-            onClick={() => setShowNotifications(!showNotifications)}
-            className="relative bg-white border border-gray-200 rounded-full p-2.5 shadow-sm hover:shadow-md transition"
-          >
-            🔔
-            {notifications.some((n) => !n.isRead) && (
-              <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] rounded-full w-4 h-4 flex items-center justify-center">
-                {notifications.filter((n) => !n.isRead).length}
-              </span>
-            )}
-          </button>
-          {showNotifications && (
-            <div className="absolute top-12 right-0 w-80 bg-white rounded-xl shadow-lg border border-gray-100 z-30 max-h-96 overflow-y-auto">
-              <div className="flex justify-between items-center p-3 border-b">
-                <span className="font-semibold text-gray-700 text-sm">Notifications</span>
-                <button onClick={handleMarkAllRead} className="text-xs text-emerald-700 hover:underline">Mark all read</button>
-              </div>
-              {notifications.length === 0 && <p className="p-4 text-sm text-gray-400">No notifications yet.</p>}
-              {notifications.map((n) => (
-                <div
-                  key={n._id}
-                  onClick={() => !n.isRead && handleMarkNotificationRead(n._id)}
-                  className={`p-3 border-b text-sm cursor-pointer ${n.isRead ? 'text-gray-500' : 'text-gray-800 bg-emerald-50'}`}
-                >
-                  <p>{n.message}</p>
-                  <p className="text-[11px] text-gray-400 mt-1">{new Date(n.createdAt).toLocaleString()}</p>
+      {/* Main */}
+      <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
+        <header className="bg-white border-b px-6 py-3 flex items-center justify-between">
+          <div>
+            <h2 className="text-base font-semibold text-slate-900 capitalize">
+              {NAV.find((n) => n.id === activeTab)?.label}
+            </h2>
+            <p className="text-xs text-slate-500">
+              Manage intake, grading, payouts and compliance records
+            </p>
+          </div>
+          {fpoProfile?.kycStatus !== 'Verified' && (
+            <div className="text-xs bg-amber-50 text-amber-800 border border-amber-200 px-3 py-1.5 rounded">
+              KYC not verified — publishing listings and payouts may be restricted
+            </div>
+          )}
+        </header>
+
+        <main className="flex-1 p-6 overflow-y-auto">
+          {msg && (
+            <div className="mb-4 bg-emerald-50 border border-emerald-200 text-emerald-800 px-4 py-2 rounded text-sm">
+              {msg}
+            </div>
+          )}
+          {err && (
+            <div className="mb-4 bg-red-50 border border-red-200 text-red-700 px-4 py-2 rounded text-sm">
+              {err}
+            </div>
+          )}
+
+          {/* OVERVIEW */}
+          {activeTab === 'analytics' && (
+            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {[
+                { label: 'Member farmers', value: analytics.totalFarmers ?? farmers.length },
+                { label: 'Intake batches', value: analytics.totalBatches ?? batches.length },
+                { label: 'Stock (kg)', value: analytics.totalStockKg ?? '—' },
+                {
+                  label: 'Payouts distributed (₹)',
+                  value: analytics.totalPayoutsDistributed ?? '—',
+                },
+              ].map((c) => (
+                <div key={c.label} className="bg-white border rounded-lg p-5">
+                  <p className="text-xs uppercase tracking-wide text-slate-500">{c.label}</p>
+                  <p className="text-2xl font-semibold text-slate-900 mt-2">{c.value}</p>
                 </div>
               ))}
             </div>
           )}
-        </div>
 
-        {activeTab === 'completion' && (
-          <FpoCompletionPanel profile={fpoProfile} farmers={farmers} batches={batches} onRefresh={fetchProfile} />
-        )}
-
-        {/* Tab 1: Analytics */}
-        {activeTab === 'analytics' && (
-          <div>
-            <h2 className="text-2xl font-bold mb-6 text-gray-800">FPO Operations Overview</h2>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-              <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-                <p className="text-sm text-gray-500">Total Registered Farmers</p>
-                <p className="text-3xl font-bold text-emerald-600 mt-2">{analytics.totalFarmers || 0}</p>
-              </div>
-              <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-                <p className="text-sm text-gray-500">Total Batches Collected</p>
-                <p className="text-3xl font-bold text-emerald-600 mt-2">{analytics.totalBatches || 0}</p>
-              </div>
-              <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-                <p className="text-sm text-gray-500">Total Available Stock</p>
-                <p className="text-3xl font-bold text-emerald-600 mt-2">{analytics.totalStockKg || 0} kg</p>
-              </div>
-              <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-                <p className="text-sm text-gray-500">Total Distributed Payouts</p>
-                <p className="text-3xl font-bold text-emerald-600 mt-2">₹{analytics.totalPayoutsDistributed || 0}</p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Tab 2: Farmers Management */}
-        {activeTab === 'farmers' && (
-          <div className="space-y-6">
-            <h2 className="text-2xl font-bold text-gray-800">Farmer Onboarding & Management</h2>
-            <form onSubmit={handleAddFarmer} className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 grid grid-cols-2 gap-4">
-              <h3 className="col-span-2 font-semibold text-gray-700 text-base border-b pb-2">Add a single farmer</h3>
-              <input
-                type="text"
-                placeholder="Farmer Full Name"
-                value={farmerForm.name}
-                onChange={(e) => setFarmerForm({...farmerForm, name: e.target.value})}
-                className="p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
-                required
-              />
-              <input
-                type="text"
-                placeholder="Phone Number"
-                value={farmerForm.phone}
-                onChange={(e) => setFarmerForm({...farmerForm, phone: e.target.value})}
-                className="p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
-                required
-              />
-              <input
-                type="text"
-                placeholder="Village / Location"
-                value={farmerForm.address}
-                onChange={(e) => setFarmerForm({...farmerForm, address: e.target.value})}
-                className="p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-              <input
-                type="text"
-                placeholder="Aadhaar Number"
-                value={farmerForm.aadhaarNumber}
-                onChange={(e) => setFarmerForm({...farmerForm, aadhaarNumber: e.target.value})}
-                className="p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-              <button className="col-span-2 bg-emerald-600 text-white py-2.5 rounded-lg font-medium hover:bg-emerald-700 transition">
-                Register Farmer
-              </button>
-            </form>
-
-            {/* NEW: CSV bulk import — backend endpoint already existed, no UI until now */}
-            <form onSubmit={handleCsvImport} className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 space-y-3">
-              <h3 className="font-semibold text-gray-700 text-base border-b pb-2">Bulk import via CSV</h3>
-              <p className="text-xs text-gray-500">
-                CSV columns expected: name, phone, aadhaarNumber, address, accountNumber, ifscCode, bankName. Only "name" and "phone" are required per row.
-              </p>
-              <input
-                type="file"
-                accept=".csv"
-                onChange={(e) => setCsvFile(e.target.files[0] || null)}
-                className="block w-full text-sm text-gray-600"
-              />
-              <button
-                disabled={!csvFile || csvUploading}
-                className="bg-emerald-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-emerald-700 transition disabled:opacity-50"
-              >
-                {csvUploading ? 'Importing...' : 'Import Farmers'}
-              </button>
-              {csvResult && <p className="text-sm text-gray-600">{csvResult}</p>}
-            </form>
-
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-              <table className="w-full text-left border-collapse">
-                <thead className="bg-gray-50 border-b">
-                  <tr>
-                    <th className="p-4 text-sm font-semibold text-gray-600">Name</th>
-                    <th className="p-4 text-sm font-semibold text-gray-600">Phone</th>
-                    <th className="p-4 text-sm font-semibold text-gray-600">Location</th>
-                    <th className="p-4 text-sm font-semibold text-gray-600">Status</th>
-                    <th className="p-4 text-sm font-semibold text-gray-600">Verified</th>
-                    <th className="p-4 text-sm font-semibold text-gray-600">Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {farmers.map((f) => (
-                    <tr key={f._id} className="border-b hover:bg-gray-50">
-                      <td className="p-4 font-medium text-gray-800">
-                        <button onClick={() => openFarmerDetail(f._id)} className="hover:underline hover:text-emerald-700">
-                          {f.name}
-                        </button>
-                      </td>
-                      <td className="p-4 text-gray-600">{f.phone}</td>
-                      <td className="p-4 text-gray-600">{f.address || 'N/A'}</td>
-                      <td className="p-4">
-                        <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${f.isActive ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                          {f.isActive ? 'Active' : 'Inactive'}
-                        </span>
-                      </td>
-                      <td className="p-4">
-                        {/* NEW: wired to PATCH /fpo/farmers/:farmerId/verify */}
-                        <button
-                          onClick={() => handleToggleFarmerVerification(f._id)}
-                          className={`px-2.5 py-1 rounded-full text-xs font-semibold ${f.isVerified ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}
-                        >
-                          {f.isVerified ? 'Verified' : 'Unverified'}
-                        </button>
-                      </td>
-                      <td className="p-4">
-                        {/* NEW: wired to PATCH /fpo/farmers/:farmerId/status */}
-                        <button
-                          onClick={() => handleToggleFarmerStatus(f._id)}
-                          className="text-sm font-medium text-emerald-700 hover:underline"
-                        >
-                          {f.isActive ? 'Deactivate' : 'Activate'}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                  {farmers.length === 0 && (
-                    <tr>
-                      <td colSpan="6" className="p-6 text-center text-gray-500">No farmers registered yet.</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            {/* NEW: Farmer detail modal — produce & payout history */}
-            {farmerDetail && (
-              <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-40 px-4" onClick={() => setFarmerDetail(null)}>
-                <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6 max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-                  <div className="flex justify-between items-start mb-4">
-                    <div>
-                      <h3 className="text-lg font-bold text-gray-900">{farmerDetail.farmer.name}</h3>
-                      <p className="text-sm text-gray-500">{farmerDetail.farmer.phone} · {farmerDetail.farmer.address}</p>
-                    </div>
-                    <button onClick={() => setFarmerDetail(null)} className="text-gray-400 hover:text-gray-600 text-xl">×</button>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3 mb-4">
-                    <div className="bg-gray-50 p-3 rounded-lg">
-                      <p className="text-xs text-gray-500">Total Intake</p>
-                      <p className="text-lg font-bold text-emerald-700">{farmerDetail.totalIntakeKg} kg</p>
-                    </div>
-                    <div className="bg-gray-50 p-3 rounded-lg">
-                      <p className="text-xs text-gray-500">Total Paid Out</p>
-                      <p className="text-lg font-bold text-emerald-700">₹{farmerDetail.totalPaid}</p>
-                    </div>
-                  </div>
-
-                  <h4 className="font-semibold text-gray-700 text-sm mb-2">Produce History</h4>
-                  <div className="space-y-2 mb-4">
-                    {farmerDetail.batches.length === 0 && <p className="text-sm text-gray-400">No batches yet.</p>}
-                    {farmerDetail.batches.map((b) => (
-                      <div key={b._id} className="border rounded-lg p-2 text-sm">
-                        <span className="font-medium">{b.batchId}</span> — {b.produceType}, {b.rawQuantityKg}kg
-                        <span className="text-xs text-gray-500 ml-2">({b.grading?.status || 'Pending'})</span>
-                      </div>
+          {/* FARMERS */}
+          {activeTab === 'farmers' && (
+            <div className="space-y-6">
+              <form onSubmit={submitFarmer} className="bg-white border rounded-lg p-5 grid md:grid-cols-3 gap-3">
+                <h3 className="md:col-span-3 font-semibold text-slate-800 text-sm">Register farmer</h3>
+                {[
+                  ['name', 'Full name *'],
+                  ['phone', 'Phone *'],
+                  ['aadhaarNumber', 'Aadhaar (masked on save)'],
+                  ['memberId', 'Member / Shareholder ID'],
+                  ['village', 'Village'],
+                  ['block', 'Block'],
+                  ['district', 'District'],
+                  ['state', 'State'],
+                  ['landHoldingAcres', 'Land holding (acres)'],
+                  ['cropsGrown', 'Crops (comma-separated)'],
+                  ['joiningDate', 'Joining date'],
+                  ['address', 'Address'],
+                ].map(([k, label]) => (
+                  <label key={k} className="text-xs text-slate-600">
+                    {label}
+                    <input
+                      type={k === 'joiningDate' ? 'date' : k === 'landHoldingAcres' ? 'number' : 'text'}
+                      className="mt-1 w-full border rounded px-2 py-1.5 text-sm"
+                      value={farmerForm[k]}
+                      onChange={(e) => setFarmerForm({ ...farmerForm, [k]: e.target.value })}
+                      required={k === 'name' || k === 'phone'}
+                    />
+                  </label>
+                ))}
+                <label className="text-xs text-slate-600">
+                  Gender
+                  <select
+                    className="mt-1 w-full border rounded px-2 py-1.5 text-sm"
+                    value={farmerForm.gender}
+                    onChange={(e) => setFarmerForm({ ...farmerForm, gender: e.target.value })}
+                  >
+                    <option value="">—</option>
+                    {['Male', 'Female', 'Other'].map((g) => (
+                      <option key={g}>{g}</option>
                     ))}
-                  </div>
-
-                  <h4 className="font-semibold text-gray-700 text-sm mb-2">Payout History</h4>
-                  <div className="space-y-2">
-                    {farmerDetail.payouts.length === 0 && <p className="text-sm text-gray-400">No payouts yet.</p>}
-                    {farmerDetail.payouts.map((p) => (
-                      <div key={p._id} className="border rounded-lg p-2 text-sm flex justify-between">
-                        <span>₹{p.amount} {p.batch ? `(${p.batch.batchId})` : ''}</span>
-                        <span className="text-xs text-gray-500">{p.status}</span>
-                      </div>
+                  </select>
+                </label>
+                <label className="text-xs text-slate-600">
+                  Category
+                  <select
+                    className="mt-1 w-full border rounded px-2 py-1.5 text-sm"
+                    value={farmerForm.category}
+                    onChange={(e) => setFarmerForm({ ...farmerForm, category: e.target.value })}
+                  >
+                    <option value="">—</option>
+                    {['General', 'OBC', 'SC', 'ST', 'Other'].map((g) => (
+                      <option key={g}>{g}</option>
                     ))}
-                  </div>
+                  </select>
+                </label>
+                {user?.role === 'fpo_admin' && (
+                  <>
+                    <label className="text-xs text-slate-600">
+                      Bank account
+                      <input
+                        className="mt-1 w-full border rounded px-2 py-1.5 text-sm"
+                        value={farmerForm.accountNumber}
+                        onChange={(e) =>
+                          setFarmerForm({ ...farmerForm, accountNumber: e.target.value })
+                        }
+                      />
+                    </label>
+                    <label className="text-xs text-slate-600">
+                      IFSC
+                      <input
+                        className="mt-1 w-full border rounded px-2 py-1.5 text-sm"
+                        value={farmerForm.ifscCode}
+                        onChange={(e) => setFarmerForm({ ...farmerForm, ifscCode: e.target.value })}
+                      />
+                    </label>
+                    <label className="text-xs text-slate-600">
+                      Bank name
+                      <input
+                        className="mt-1 w-full border rounded px-2 py-1.5 text-sm"
+                        value={farmerForm.bankName}
+                        onChange={(e) => setFarmerForm({ ...farmerForm, bankName: e.target.value })}
+                      />
+                    </label>
+                  </>
+                )}
+                <div className="md:col-span-3">
+                  <button type="submit" className="bg-emerald-700 text-white text-sm px-4 py-2 rounded">
+                    Save farmer
+                  </button>
+                </div>
+              </form>
 
-                  <p className="text-[11px] text-gray-400 mt-4">
-                    Note: once produce is graded it merges into pooled inventory by produce type and grade, so exact "sales" per farmer beyond this batch/payout history isn't tracked.
+              <div className="bg-white border rounded-lg p-5 flex flex-wrap items-end gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-slate-800">Bulk import (Excel / CSV)</p>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Columns: name, phone, village, block, district, state, landHoldingAcres, crops,
+                    gender, category, memberId, joiningDate, accountNumber, ifscCode, bankName,
+                    aadhaarNumber
                   </p>
                 </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Tab 3: Produce Intake & Batch Quality Grading */}
-        {activeTab === 'intake' && (
-          <div className="space-y-6">
-            <h2 className="text-2xl font-bold text-gray-800">Produce Intake & QR Generation</h2>
-
-            {/* Form 1: Intake Form */}
-            <form onSubmit={handleCreateIntake} className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 grid grid-cols-2 gap-4">
-              <h3 className="col-span-2 font-semibold text-gray-700 text-base border-b pb-2">1. Record Raw Intake</h3>
-              <select
-                value={intakeForm.farmerId}
-                onChange={(e) => setIntakeForm({...intakeForm, farmerId: e.target.value})}
-                className="p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
-                required
-              >
-                <option value="">Select Farmer</option>
-                {farmers.map((f) => (
-                  <option key={f._id} value={f._id}>{f.name} ({f.phone})</option>
-                ))}
-              </select>
-              <input
-                type="text"
-                placeholder="Produce Type (e.g. Tomatoes, Wheat)"
-                value={intakeForm.produceType}
-                onChange={(e) => setIntakeForm({...intakeForm, produceType: e.target.value})}
-                className="p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
-                required
-              />
-              <input
-                type="number"
-                placeholder="Raw Quantity (Kg)"
-                value={intakeForm.rawQuantityKg}
-                onChange={(e) => setIntakeForm({...intakeForm, rawQuantityKg: e.target.value})}
-                className="p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
-                required
-              />
-              <input
-                type="date"
-                value={intakeForm.harvestDate}
-                onChange={(e) => setIntakeForm({...intakeForm, harvestDate: e.target.value})}
-                className="p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-              <button className="col-span-2 bg-emerald-600 text-white py-2.5 rounded-lg font-medium hover:bg-emerald-700 transition">
-                Generate Batch & Record Intake
-              </button>
-            </form>
-
-            {/* Form 2: Batch Quality Grading Panel */}
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-              <h3 className="font-semibold text-gray-700 text-base border-b pb-2 mb-4">2. Grade Existing Batch Quality</h3>
-              <form onSubmit={handleGradeBatch} className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <select
-                  value={gradingForm.batchId}
-                  onChange={(e) => setGradingForm({ ...gradingForm, batchId: e.target.value })}
-                  className="p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 md:col-span-3"
-                  required
+                <input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => setCsvFile(e.target.files?.[0])} />
+                <button
+                  type="button"
+                  onClick={importFarmers}
+                  disabled={!csvFile}
+                  className="bg-slate-800 text-white text-sm px-4 py-2 rounded disabled:opacity-40"
                 >
-                  <option value="">Select Batch to Grade</option>
-                  {batches.map((b) => (
-                    <option key={b._id} value={b._id}>
-                      {b.batchId} - {b.produceType} ({b.rawQuantityKg} kg) - Status: {b.status || 'Pending'}
+                  Import
+                </button>
+              </div>
+
+              <div className="bg-white border rounded-lg overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 text-slate-600 border-b">
+                    <tr>
+                      <th className="text-left px-4 py-2">Name</th>
+                      <th className="text-left px-4 py-2">Phone</th>
+                      <th className="text-left px-4 py-2">Village / District</th>
+                      <th className="text-left px-4 py-2">Member ID</th>
+                      <th className="text-left px-4 py-2">Land (ac)</th>
+                      <th className="text-left px-4 py-2">Aadhaar</th>
+                      <th className="text-left px-4 py-2"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {farmers.map((f) => (
+                      <tr key={f._id} className="border-b last:border-0">
+                        <td className="px-4 py-2 font-medium">{f.name}</td>
+                        <td className="px-4 py-2">{f.phone}</td>
+                        <td className="px-4 py-2 text-slate-600">
+                          {[f.village, f.district].filter(Boolean).join(', ') || f.address || '—'}
+                        </td>
+                        <td className="px-4 py-2 font-mono text-xs">{f.memberId || '—'}</td>
+                        <td className="px-4 py-2">{f.landHoldingAcres || '—'}</td>
+                        <td className="px-4 py-2 text-xs">{f.aadhaarNumber || '—'}</td>
+                        <td className="px-4 py-2">
+                          <button
+                            type="button"
+                            onClick={() => printFarmerStatement(f)}
+                            className="text-xs text-emerald-700 hover:underline"
+                          >
+                            Statement
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {!farmers.length && (
+                      <tr>
+                        <td colSpan={7} className="px-4 py-6 text-center text-slate-400">
+                          No farmers registered yet
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* INTAKE */}
+          {activeTab === 'intake' && (
+            <div className="grid lg:grid-cols-2 gap-6">
+              <form onSubmit={submitIntake} className="bg-white border rounded-lg p-5 space-y-3">
+                <h3 className="font-semibold text-sm text-slate-800">Record produce intake</h3>
+                <select
+                  required
+                  className="w-full border rounded px-3 py-2 text-sm"
+                  value={intakeForm.farmerId}
+                  onChange={(e) => setIntakeForm({ ...intakeForm, farmerId: e.target.value })}
+                >
+                  <option value="">Select farmer</option>
+                  {farmers.map((f) => (
+                    <option key={f._id} value={f._id}>
+                      {f.name} — {f.phone}
                     </option>
                   ))}
                 </select>
-
                 <input
-                  type="number"
-                  placeholder="Grade A (Kg)"
-                  value={gradingForm.gradeA_Kg}
-                  onChange={(e) => setGradingForm({ ...gradingForm, gradeA_Kg: e.target.value })}
-                  className="p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
                   required
+                  placeholder="Produce type"
+                  className="w-full border rounded px-3 py-2 text-sm"
+                  value={intakeForm.produceType}
+                  onChange={(e) => setIntakeForm({ ...intakeForm, produceType: e.target.value })}
                 />
                 <input
-                  type="number"
-                  placeholder="Grade B (Kg)"
-                  value={gradingForm.gradeB_Kg}
-                  onChange={(e) => setGradingForm({ ...gradingForm, gradeB_Kg: e.target.value })}
-                  className="p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
                   required
+                  type="number"
+                  min="0.001"
+                  step="0.001"
+                  placeholder="Quantity (kg)"
+                  className="w-full border rounded px-3 py-2 text-sm"
+                  value={intakeForm.rawQuantityKg}
+                  onChange={(e) => setIntakeForm({ ...intakeForm, rawQuantityKg: e.target.value })}
                 />
                 <input
-                  type="number"
-                  placeholder="Grade C (Kg)"
-                  value={gradingForm.gradeC_Kg}
-                  onChange={(e) => setGradingForm({ ...gradingForm, gradeC_Kg: e.target.value })}
-                  className="p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
-                  required
+                  type="date"
+                  className="w-full border rounded px-3 py-2 text-sm"
+                  value={intakeForm.harvestDate}
+                  onChange={(e) => setIntakeForm({ ...intakeForm, harvestDate: e.target.value })}
                 />
-
-                <input
-                  type="number"
-                  step="0.1"
-                  max="10"
-                  placeholder="Quality Score (out of 10)"
-                  value={gradingForm.qualityScore}
-                  onChange={(e) => setGradingForm({ ...gradingForm, qualityScore: e.target.value })}
-                  className="p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
-                  required
-                />
-
-                {/* NEW: status dropdown — previously always sent "Approved" no matter what */}
-                <select
-                  value={gradingForm.status}
-                  onChange={(e) => setGradingForm({ ...gradingForm, status: e.target.value })}
-                  className="p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
-                >
-                  <option value="Approved">Approve</option>
-                  <option value="Rejected">Reject</option>
-                  <option value="Pending">Keep Pending</option>
-                </select>
-
-                {/* NEW: quality images — backend already accepted up to 5 files, no UI until now */}
-                <div className="md:col-span-3">
-                  <label className="block text-sm text-gray-600 mb-1">Quality Images (up to 5)</label>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    onChange={(e) => setGradingImages(Array.from(e.target.files).slice(0, 5))}
-                    className="block w-full text-sm text-gray-600"
-                  />
-                  {gradingImages.length > 0 && (
-                    <p className="text-xs text-gray-500 mt-1">{gradingImages.length} file(s) selected</p>
-                  )}
-                </div>
-
-                <button className="md:col-span-3 bg-emerald-600 text-white py-2.5 rounded-lg font-medium hover:bg-emerald-700 transition">
-                  Submit Batch Grading & Update Inventory
+                <button type="submit" className="bg-emerald-700 text-white text-sm px-4 py-2 rounded">
+                  Save intake
                 </button>
               </form>
-            </div>
 
-            {/* Existing Batches List */}
-            <h3 className="text-xl font-bold text-gray-800 pt-2">Registered Batches</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {batches.map((b) => (
-                <div key={b._id} className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex justify-between items-center">
-                  <div>
-                    <h3 className="font-bold text-lg text-emerald-800">{b.batchId}</h3>
-                    <p className="text-sm text-gray-600 mt-1">Produce: {b.produceType}</p>
-                    <p className="text-sm text-gray-600">Farmer: {b.farmer?.name || 'N/A'}</p>
-                    <p className="text-sm text-gray-600">Quantity: {b.rawQuantityKg} kg</p>
-                    <p className="text-sm font-semibold text-emerald-600 mt-1">Status: {b.grading?.status || 'Pending'}</p>
-                    {b.grading?.qualityImages?.length > 0 && (
-                      <div className="flex gap-1 mt-2">
-                        {b.grading.qualityImages.slice(0, 3).map((path, i) => (
-                          <img
-                            key={i}
-                            src={`${import.meta.env.VITE_API_URL?.replace('/api', '') || 'http://localhost:5000'}/${path.replace(/^.*uploads/, 'uploads')}`}
-                            alt="Quality"
-                            className="w-10 h-10 object-cover rounded border"
-                          />
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  {b.qrCodeUrl && (
-                    <img src={b.qrCodeUrl} alt="Batch QR Code" className="w-24 h-24 rounded-md border p-1" />
-                  )}
+              <form onSubmit={submitGrading} className="bg-white border rounded-lg p-5 space-y-3">
+                <h3 className="font-semibold text-sm text-slate-800">Grade batch</h3>
+                <select
+                  required
+                  className="w-full border rounded px-3 py-2 text-sm"
+                  value={gradingForm.batchId}
+                  onChange={(e) => setGradingForm({ ...gradingForm, batchId: e.target.value })}
+                >
+                  <option value="">Select batch</option>
+                  {batches.map((b) => (
+                    <option key={b._id} value={b._id}>
+                      {b.batchId} — {b.produceType} ({b.rawQuantityKg}kg)
+                    </option>
+                  ))}
+                </select>
+                <div className="grid grid-cols-3 gap-2">
+                  {['gradeA_Kg', 'gradeB_Kg', 'gradeC_Kg'].map((k, i) => (
+                    <input
+                      key={k}
+                      type="number"
+                      min="0"
+                      step="0.001"
+                      placeholder={`Grade ${['A', 'B', 'C'][i]} kg`}
+                      className="border rounded px-2 py-2 text-sm"
+                      value={gradingForm[k]}
+                      onChange={(e) => setGradingForm({ ...gradingForm, [k]: e.target.value })}
+                    />
+                  ))}
                 </div>
-              ))}
-              {batches.length === 0 && (
-                <p className="text-gray-500 col-span-2">No batches recorded yet.</p>
-              )}
-            </div>
-          </div>
-        )}
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  placeholder="Quality score"
+                  className="w-full border rounded px-3 py-2 text-sm"
+                  value={gradingForm.qualityScore}
+                  onChange={(e) => setGradingForm({ ...gradingForm, qualityScore: e.target.value })}
+                />
+                <button type="submit" className="bg-slate-800 text-white text-sm px-4 py-2 rounded">
+                  Submit grading
+                </button>
+              </form>
 
-        {/* Tab 4: Inventory */}
-        {activeTab === 'inventory' && (
-          <div className="space-y-6">
-            <h2 className="text-2xl font-bold mb-2 text-gray-800">Current Stock Inventory</h2>
-
-            {/* NEW: low-stock alerts */}
-            {lowStockAlerts.length > 0 && (
-              <div className="bg-red-50 border border-red-200 rounded-xl p-4">
-                <p className="font-semibold text-red-700 text-sm mb-1">⚠ Low Stock Alerts</p>
-                {lowStockAlerts.map((i) => (
-                  <p key={i._id} className="text-sm text-red-600">
-                    {i.produceType} (Grade {i.grade}): only {i.freeStock}kg free (threshold {i.minAlertThreshold}kg)
-                  </p>
-                ))}
+              <div className="lg:col-span-2 bg-white border rounded-lg overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 border-b text-slate-600">
+                    <tr>
+                      <th className="text-left px-4 py-2">Batch</th>
+                      <th className="text-left px-4 py-2">Produce</th>
+                      <th className="text-left px-4 py-2">Qty</th>
+                      <th className="text-left px-4 py-2">Payout</th>
+                      <th className="text-left px-4 py-2">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {batches.map((b) => (
+                      <tr key={b._id} className="border-b">
+                        <td className="px-4 py-2 font-mono text-xs">{b.batchId}</td>
+                        <td className="px-4 py-2">{b.produceType}</td>
+                        <td className="px-4 py-2">{b.rawQuantityKg} kg</td>
+                        <td className="px-4 py-2">₹{b.amountOwedToFarmer || 0}</td>
+                        <td className="px-4 py-2">{b.payoutStatus}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            )}
+            </div>
+          )}
 
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-              <table className="w-full text-left border-collapse">
-                <thead className="bg-gray-50 border-b">
+          {/* INVENTORY */}
+          {activeTab === 'inventory' && (
+            <div className="bg-white border rounded-lg overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 border-b text-slate-600">
                   <tr>
-                    <th className="p-4 text-sm font-semibold text-gray-600">Produce</th>
-                    <th className="p-4 text-sm font-semibold text-gray-600">Grade</th>
-                    <th className="p-4 text-sm font-semibold text-gray-600">Total Stock (Kg)</th>
-                    <th className="p-4 text-sm font-semibold text-gray-600">Reserved (Kg)</th>
-                    <th className="p-4 text-sm font-semibold text-gray-600">Sold (Kg)</th>
-                    <th className="p-4 text-sm font-semibold text-gray-600">Free (Kg)</th>
+                    <th className="text-left px-4 py-2">Produce</th>
+                    <th className="text-left px-4 py-2">Grade</th>
+                    <th className="text-left px-4 py-2">Total</th>
+                    <th className="text-left px-4 py-2">Reserved</th>
+                    <th className="text-left px-4 py-2">Sold</th>
                   </tr>
                 </thead>
                 <tbody>
                   {inventory.map((i) => (
-                    <tr key={i._id} className="border-b hover:bg-gray-50">
-                      <td className="p-4 font-medium text-gray-800">{i.produceType}</td>
-                      <td className="p-4 font-semibold text-emerald-700">Grade {i.grade}</td>
-                      <td className="p-4 text-gray-700">{i.totalQuantity} kg</td>
-                      <td className="p-4 text-gray-700">{i.reservedQuantity} kg</td>
-                      <td className="p-4 text-gray-700">{i.soldQuantity} kg</td>
-                      <td className="p-4 text-gray-700 font-semibold">{i.totalQuantity - i.reservedQuantity - i.soldQuantity} kg</td>
+                    <tr key={i._id} className="border-b">
+                      <td className="px-4 py-2">{i.produceType}</td>
+                      <td className="px-4 py-2">{i.grade}</td>
+                      <td className="px-4 py-2">{i.totalQuantity} kg</td>
+                      <td className="px-4 py-2">{i.reservedQuantity} kg</td>
+                      <td className="px-4 py-2">{i.soldQuantity} kg</td>
                     </tr>
                   ))}
-                  {inventory.length === 0 && (
+                  {!inventory.length && (
                     <tr>
-                      <td colSpan="6" className="p-6 text-center text-gray-500">No graded stock available in inventory.</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            {/* NEW: stock movement history */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-              <h3 className="font-semibold text-gray-700 text-base p-4 border-b">Stock Movement History</h3>
-              <table className="w-full text-left border-collapse">
-                <thead className="bg-gray-50 border-b">
-                  <tr>
-                    <th className="p-3 text-sm font-semibold text-gray-600">Date</th>
-                    <th className="p-3 text-sm font-semibold text-gray-600">Type</th>
-                    <th className="p-3 text-sm font-semibold text-gray-600">Produce</th>
-                    <th className="p-3 text-sm font-semibold text-gray-600">Grade</th>
-                    <th className="p-3 text-sm font-semibold text-gray-600">Quantity</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {stockMovements.slice(0, 30).map((m) => (
-                    <tr key={m._id} className="border-b hover:bg-gray-50">
-                      <td className="p-3 text-gray-500 text-sm">{new Date(m.createdAt).toLocaleString()}</td>
-                      <td className="p-3">
-                        <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
-                          m.type === 'Intake' ? 'bg-green-100 text-green-700' :
-                          m.type === 'Sold' ? 'bg-blue-100 text-blue-700' :
-                          m.type === 'Cancelled' ? 'bg-red-100 text-red-700' :
-                          'bg-gray-100 text-gray-600'
-                        }`}>{m.type}</span>
+                      <td colSpan={5} className="px-4 py-6 text-center text-slate-400">
+                        No inventory yet — grade an intake batch first
                       </td>
-                      <td className="p-3 text-gray-700 text-sm">{m.produceType}</td>
-                      <td className="p-3 text-gray-700 text-sm">{m.grade}</td>
-                      <td className="p-3 text-gray-700 text-sm">{m.quantityKg} kg</td>
-                    </tr>
-                  ))}
-                  {stockMovements.length === 0 && (
-                    <tr>
-                      <td colSpan="5" className="p-6 text-center text-gray-500">No stock movements recorded yet.</td>
                     </tr>
                   )}
                 </tbody>
               </table>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* NEW Tab: Listings (linked to Inventory) */}
-        {activeTab === 'listings' && (
-          <div className="space-y-6">
-            <h2 className="text-2xl font-bold text-gray-800">Product Listings</h2>
-            <form onSubmit={handleCreateListing} className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 grid grid-cols-2 gap-4">
-              <h3 className="col-span-2 font-semibold text-gray-700 text-base border-b pb-2">Create a listing from your graded stock</h3>
-              <input
-                type="text"
-                placeholder="Produce Type (must match Inventory, e.g. Tomato)"
-                value={listingForm.produceType}
-                onChange={(e) => setListingForm({ ...listingForm, produceType: e.target.value })}
-                className="p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
-                required
-              />
-              <select
-                value={listingForm.grade}
-                onChange={(e) => setListingForm({ ...listingForm, grade: e.target.value })}
-                className="p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
-              >
-                <option value="A">Grade A</option>
-                <option value="B">Grade B</option>
-                <option value="C">Grade C</option>
-                <option value="Custom">Custom</option>
-              </select>
-              <input
-                type="number"
-                placeholder="Price per Kg (₹)"
-                value={listingForm.pricePerKg}
-                onChange={(e) => setListingForm({ ...listingForm, pricePerKg: e.target.value })}
-                className="p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
-                required
-              />
-              <input
-                type="number"
-                placeholder="Quantity to List (Kg)"
-                value={listingForm.availableQuantityKg}
-                onChange={(e) => setListingForm({ ...listingForm, availableQuantityKg: e.target.value })}
-                className="p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
-                required
-              />
-              <input
-                type="number"
-                placeholder="Minimum Order Qty (Kg)"
-                value={listingForm.minOrderQtyKg}
-                onChange={(e) => setListingForm({ ...listingForm, minOrderQtyKg: e.target.value })}
-                className="p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-              <input
-                type="text"
-                placeholder="Description (optional)"
-                value={listingForm.description}
-                onChange={(e) => setListingForm({ ...listingForm, description: e.target.value })}
-                className="p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-              <select value={listingForm.sourceBatch} onChange={(e) => setListingForm({ ...listingForm, sourceBatch: e.target.value })} className="p-2.5 border rounded-lg">
-                <option value="">Source batch (optional)</option>
-                {batches.filter((b) => b.grading?.status === 'Approved' && b.produceType === listingForm.produceType).map((b) => (
-                  <option key={b._id} value={b._id}>{b.batchId}</option>
-                ))}
-              </select>
-              <input type="file" accept="image/*" multiple onChange={(e) => setListingImages(Array.from(e.target.files || []).slice(0, 5))} className="p-2.5 border rounded-lg" />
-              <button className="col-span-2 bg-emerald-600 text-white py-2.5 rounded-lg font-medium hover:bg-emerald-700 transition">
-                Create Listing (reserves stock from Inventory)
-              </button>
-            </form>
+          {/* LISTINGS */}
+          {activeTab === 'listings' && (
+            <div className="space-y-6">
+              <form onSubmit={submitListing} className="bg-white border rounded-lg p-5 grid md:grid-cols-3 gap-3">
+                <h3 className="md:col-span-3 font-semibold text-sm">Create listing from inventory</h3>
+                <input
+                  required
+                  placeholder="Produce type"
+                  className="border rounded px-3 py-2 text-sm"
+                  value={listingForm.produceType}
+                  onChange={(e) => setListingForm({ ...listingForm, produceType: e.target.value })}
+                />
+                <select
+                  className="border rounded px-3 py-2 text-sm"
+                  value={listingForm.grade}
+                  onChange={(e) => setListingForm({ ...listingForm, grade: e.target.value })}
+                >
+                  {['A', 'B', 'C'].map((g) => (
+                    <option key={g} value={g}>
+                      Grade {g}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  required
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="Price ₹/kg"
+                  className="border rounded px-3 py-2 text-sm"
+                  value={listingForm.pricePerKg}
+                  onChange={(e) => setListingForm({ ...listingForm, pricePerKg: e.target.value })}
+                />
+                <input
+                  required
+                  type="number"
+                  min="0.001"
+                  step="0.001"
+                  placeholder="Quantity kg"
+                  className="border rounded px-3 py-2 text-sm"
+                  value={listingForm.availableQuantityKg}
+                  onChange={(e) =>
+                    setListingForm({ ...listingForm, availableQuantityKg: e.target.value })
+                  }
+                />
+                <input
+                  type="number"
+                  min="0.001"
+                  placeholder="Min order kg"
+                  className="border rounded px-3 py-2 text-sm"
+                  value={listingForm.minOrderQtyKg}
+                  onChange={(e) => setListingForm({ ...listingForm, minOrderQtyKg: e.target.value })}
+                />
+                <input
+                  placeholder="Description"
+                  className="border rounded px-3 py-2 text-sm md:col-span-2"
+                  value={listingForm.description}
+                  onChange={(e) => setListingForm({ ...listingForm, description: e.target.value })}
+                />
+                <button type="submit" className="bg-emerald-700 text-white text-sm px-4 py-2 rounded">
+                  Create draft
+                </button>
+              </form>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {listings.map((l) => (
-                <div key={l._id} className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <h3 className="font-bold text-lg text-emerald-800">{l.produceType} — Grade {l.grade}</h3>
-                      <p className="text-sm text-gray-600">₹{l.pricePerKg}/kg · {l.availableQuantityKg}kg available</p>
-                      <p className="text-xs text-gray-400">Min order: {l.minOrderQtyKg}kg</p>
-                    </div>
-                    <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
-                      l.status === 'Published' ? 'bg-green-100 text-green-700' :
-                      l.status === 'Paused' ? 'bg-yellow-100 text-yellow-700' :
-                      'bg-gray-100 text-gray-600'
-                    }`}>{l.status}</span>
-                  </div>
-                  <div className="flex gap-2 mt-4">
-                    {l.status !== 'Published' && (
-                      <button onClick={() => handleSetListingStatus(l._id, 'Published')} className="text-xs bg-emerald-600 text-white px-3 py-1.5 rounded-lg hover:bg-emerald-700">
-                        Publish
-                      </button>
-                    )}
-                    {l.status === 'Published' && (
-                      <button onClick={() => handleSetListingStatus(l._id, 'Paused')} className="text-xs bg-yellow-500 text-white px-3 py-1.5 rounded-lg hover:bg-yellow-600">
-                        Pause
-                      </button>
-                    )}
-                    <button onClick={() => handleDeleteListing(l._id)} className="text-xs bg-red-100 text-red-700 px-3 py-1.5 rounded-lg hover:bg-red-200">
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              ))}
-              {listings.length === 0 && <p className="text-gray-500 col-span-2">No listings created yet.</p>}
+              <div className="bg-white border rounded-lg overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 border-b text-slate-600">
+                    <tr>
+                      <th className="text-left px-4 py-2">Produce</th>
+                      <th className="text-left px-4 py-2">Grade</th>
+                      <th className="text-left px-4 py-2">Price</th>
+                      <th className="text-left px-4 py-2">Qty</th>
+                      <th className="text-left px-4 py-2">Status</th>
+                      <th className="text-left px-4 py-2">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {listings.map((l) => (
+                      <tr key={l._id} className="border-b">
+                        <td className="px-4 py-2">{l.produceType}</td>
+                        <td className="px-4 py-2">{l.grade}</td>
+                        <td className="px-4 py-2">₹{l.pricePerKg}/kg</td>
+                        <td className="px-4 py-2">{l.availableQuantityKg} kg</td>
+                        <td className="px-4 py-2">{l.status}</td>
+                        <td className="px-4 py-2 space-x-2">
+                          {l.status !== 'Published' && (
+                            <button
+                              type="button"
+                              onClick={() => setListingStatus(l._id, 'Published')}
+                              className="text-xs text-emerald-700 hover:underline"
+                            >
+                              Publish
+                            </button>
+                          )}
+                          {l.status === 'Published' && (
+                            <button
+                              type="button"
+                              onClick={() => setListingStatus(l._id, 'Paused')}
+                              className="text-xs text-amber-700 hover:underline"
+                            >
+                              Pause
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* NEW Tab: Orders (consumer orders against listings) */}
-        {activeTab === 'orders' && (
-          <div className="space-y-6">
-            <h2 className="text-2xl font-bold text-gray-800">Incoming Orders</h2>
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-              <table className="w-full text-left border-collapse">
-                <thead className="bg-gray-50 border-b">
+          {/* ORDERS */}
+          {activeTab === 'orders' && (
+            <div className="bg-white border rounded-lg overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 border-b text-slate-600">
                   <tr>
-                    <th className="p-4 text-sm font-semibold text-gray-600">Produce</th>
-                    <th className="p-4 text-sm font-semibold text-gray-600">Consumer</th>
-                    <th className="p-4 text-sm font-semibold text-gray-600">Qty</th>
-                    <th className="p-4 text-sm font-semibold text-gray-600">Total</th>
-                    <th className="p-4 text-sm font-semibold text-gray-600">Status</th>
-                    <th className="p-4 text-sm font-semibold text-gray-600">Action</th>
+                    <th className="text-left px-4 py-2">Produce</th>
+                    <th className="text-left px-4 py-2">Buyer</th>
+                    <th className="text-left px-4 py-2">Type</th>
+                    <th className="text-left px-4 py-2">Qty</th>
+                    <th className="text-left px-4 py-2">Total</th>
+                    <th className="text-left px-4 py-2">Status</th>
                   </tr>
                 </thead>
                 <tbody>
                   {fpoOrders.map((o) => (
-                    <tr key={o._id} className="border-b hover:bg-gray-50">
-                      <td className="p-4 text-gray-800">{o.listing?.produceType} (Grade {o.listing?.grade})</td>
-                      <td className="p-4 text-gray-600">{o.consumer?.name}</td>
-                      <td className="p-4 text-gray-600">{o.quantityKg} kg</td>
-                      <td className="p-4 text-gray-600">₹{o.totalPrice}</td>
-                      <td className="p-4">
-                        <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
-                          o.status === 'Delivered' ? 'bg-green-100 text-green-700' :
-                          o.status === 'Cancelled' ? 'bg-red-100 text-red-700' :
-                          o.status === 'Dispatched' ? 'bg-blue-100 text-blue-700' :
-                          'bg-yellow-100 text-yellow-700'
-                        }`}>{o.status}</span>
+                    <tr key={o._id} className="border-b">
+                      <td className="px-4 py-2">
+                        {o.listing?.produceType} Grade {o.gradeOrdered || o.listing?.grade}
                       </td>
-                      <td className="p-4">
-                        {o.status !== 'Delivered' && o.status !== 'Cancelled' && (
-                          <div className="flex flex-col gap-1">
-                            <select
-                              onChange={(e) => e.target.value && handleUpdateOrderStatus(o._id, e.target.value)}
-                              defaultValue=""
-                              className="text-xs border rounded p-1"
-                            >
-                              <option value="" disabled>Advance status...</option>
-                              {o.status === 'Placed' && <option value="Accepted">Accept Order</option>}
-                              {o.status === 'Placed' && <option value="Rejected">Reject Order</option>}
-                              {o.status === 'Accepted' && <option value="Packed">Mark Packed</option>}
-                              {o.status === 'Packed' && <option value="Dispatched">Mark Dispatched</option>}
-                              {o.status === 'Dispatched' && <option value="Delivered">Mark Delivered</option>}
-                            </select>
-                            <button onClick={() => handleCancelOrder(o._id)} className="text-xs text-red-600 hover:underline">
-                              Cancel Order
-                            </button>
-                            {(o.status === 'Cancelled' || o.status === 'Rejected') && o.refundStatus !== 'Processed' && (
-                              <button onClick={async () => { try { await API.patch(`/fpo-orders/${o._id}/refund`, { refundTransactionId: prompt('Refund transaction ID') || undefined }); fetchFpoOrders(); } catch (err) { alert(err.response?.data?.message || 'Refund failed'); } }} className="text-xs text-blue-600 hover:underline">
-                                Mark Refund Processed
-                              </button>
-                            )}
-                          </div>
-                        )}
-                        {(o.status === 'Cancelled' || o.status === 'Rejected') && o.refundStatus !== 'Processed' && (
-                          <button onClick={async () => { try { await API.patch(`/fpo-orders/${o._id}/refund`, { refundTransactionId: prompt('Refund transaction ID') || undefined }); fetchFpoOrders(); } catch (err) { alert(err.response?.data?.message || 'Refund failed'); } }} className="text-xs text-blue-600 hover:underline mt-1">
-                            Mark Refund Processed
-                          </button>
-                        )}
-                      </td>
+                      <td className="px-4 py-2">{o.consumer?.name || '—'}</td>
+                      <td className="px-4 py-2">{o.buyerType}</td>
+                      <td className="px-4 py-2">{o.quantityKg} kg</td>
+                      <td className="px-4 py-2">₹{o.totalPrice}</td>
+                      <td className="px-4 py-2">{o.status}</td>
                     </tr>
                   ))}
-                  {fpoOrders.length === 0 && (
+                  {!fpoOrders.length && (
                     <tr>
-                      <td colSpan="6" className="p-6 text-center text-gray-500">No orders yet.</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* Tab 5: Payouts */}
-        {activeTab === 'payouts' && (
-          <div className="space-y-6">
-            <h2 className="text-2xl font-bold text-gray-800">Farmer Payouts</h2>
-            <form onSubmit={handleCreatePayout} className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 grid grid-cols-2 gap-4">
-              <select
-                value={payoutForm.farmerId}
-                onChange={(e) => setPayoutForm({ ...payoutForm, farmerId: e.target.value })}
-                className="p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
-                required
-              >
-                <option value="">Select Farmer</option>
-                {farmers.map((f) => (
-                  <option key={f._id} value={f._id}>{f.name} ({f.phone})</option>
-                ))}
-              </select>
-              <select
-                value={payoutForm.batchId}
-                onChange={(e) => setPayoutForm({ ...payoutForm, batchId: e.target.value })}
-                className="p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
-              >
-                <option value="">Select Batch (optional)</option>
-                {batches.map((b) => (
-                  <option key={b._id} value={b._id}>{b.batchId} - {b.produceType}</option>
-                ))}
-              </select>
-              <input
-                type="number"
-                placeholder="Amount (₹)"
-                value={payoutForm.amount}
-                onChange={(e) => setPayoutForm({ ...payoutForm, amount: e.target.value })}
-                className="p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
-                required
-              />
-              <input
-                type="text"
-                placeholder="Transaction ID (leave blank if pending)"
-                value={payoutForm.transactionId}
-                onChange={(e) => setPayoutForm({ ...payoutForm, transactionId: e.target.value })}
-                className="p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-              <button className="col-span-2 bg-emerald-600 text-white py-2.5 rounded-lg font-medium hover:bg-emerald-700 transition">
-                Record Payout
-              </button>
-            </form>
-
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-              <table className="w-full text-left border-collapse">
-                <thead className="bg-gray-50 border-b">
-                  <tr>
-                    <th className="p-4 text-sm font-semibold text-gray-600">Farmer</th>
-                    <th className="p-4 text-sm font-semibold text-gray-600">Batch</th>
-                    <th className="p-4 text-sm font-semibold text-gray-600">Amount</th>
-                    <th className="p-4 text-sm font-semibold text-gray-600">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {payouts.map((p) => (
-                    <tr key={p._id} className="border-b hover:bg-gray-50">
-                      <td className="p-4 font-medium text-gray-800">{p.farmer?.name || 'N/A'}</td>
-                      <td className="p-4 text-gray-600">{p.batch?.batchId || '—'}</td>
-                      <td className="p-4 text-gray-700">₹{p.amount}</td>
-                      <td className="p-4">
-                        <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
-                          p.status === 'Completed' ? 'bg-green-100 text-green-700' :
-                          p.status === 'Failed' ? 'bg-red-100 text-red-700' :
-                          'bg-yellow-100 text-yellow-700'
-                        }`}>
-                          {p.status}
-                        </span>
+                      <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
+                        No orders yet
                       </td>
                     </tr>
-                  ))}
-                  {payouts.length === 0 && (
-                    <tr>
-                      <td colSpan="4" className="p-6 text-center text-gray-500">No payouts recorded yet.</td>
-                    </tr>
                   )}
                 </tbody>
               </table>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* NEW Tab: Reports */}
-        {activeTab === 'reports' && (
-          <div className="space-y-6">
-            <h2 className="text-2xl font-bold text-gray-800">Reports & Analytics</h2>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-                <p className="text-sm text-gray-500">Total Revenue</p>
-                <p className="text-2xl font-bold text-emerald-600 mt-1">₹{salesReport.totalRevenue}</p>
-                <p className="text-xs text-gray-400 mt-1">{salesReport.totalOrders || 0} orders</p>
-              </div>
-              <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-                <p className="text-sm text-gray-500">FPO Earnings (Settlement)</p>
-                <p className="text-2xl font-bold text-emerald-600 mt-1">₹{settlement.totalEarnings}</p>
-              </div>
-              <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col justify-between">
-                <p className="text-sm text-gray-500">Payout Report</p>
-                <button onClick={handleDownloadPayoutReport} className="mt-2 bg-emerald-600 text-white text-sm px-3 py-2 rounded-lg hover:bg-emerald-700 w-fit">
-                  Download CSV
-                </button>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-                <h3 className="font-semibold text-gray-700 mb-3">Best-Selling Produce</h3>
-                {salesReport.bestSelling?.length === 0 && <p className="text-sm text-gray-400">No sales yet.</p>}
-                {salesReport.bestSelling?.map((b) => (
-                  <div key={b.produceType} className="flex justify-between text-sm py-1.5 border-b last:border-0">
-                    <span>{b.produceType}</span>
-                    <span className="font-semibold">{b.quantityKg} kg</span>
-                  </div>
-                ))}
-              </div>
-
-              <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-                <h3 className="font-semibold text-gray-700 mb-3">Grade Distribution (Sold)</h3>
-                {salesReport.gradeDistribution?.length === 0 && <p className="text-sm text-gray-400">No sales yet.</p>}
-                {salesReport.gradeDistribution?.map((g) => (
-                  <div key={g.grade} className="flex justify-between text-sm py-1.5 border-b last:border-0">
-                    <span>Grade {g.grade}</span>
-                    <span className="font-semibold">{g.quantityKg} kg</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-              <h3 className="font-semibold text-gray-700 mb-3">Farmer-wise Performance</h3>
-              <table className="w-full text-left border-collapse">
-                <thead className="border-b">
-                  <tr>
-                    <th className="p-2 text-sm font-semibold text-gray-600">Farmer</th>
-                    <th className="p-2 text-sm font-semibold text-gray-600">Phone</th>
-                    <th className="p-2 text-sm font-semibold text-gray-600">Batches</th>
-                    <th className="p-2 text-sm font-semibold text-gray-600">Total Kg</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {farmerPerformance.map((f) => (
-                    <tr key={f.farmerId} className="border-b">
-                      <td className="p-2 text-sm">{f.name}</td>
-                      <td className="p-2 text-sm text-gray-500">{f.phone}</td>
-                      <td className="p-2 text-sm">{f.totalBatches}</td>
-                      <td className="p-2 text-sm font-semibold">{f.totalKg} kg</td>
-                    </tr>
+          {/* PAYOUTS */}
+          {activeTab === 'payouts' && (
+            <div className="space-y-6">
+              <form onSubmit={submitPayout} className="bg-white border rounded-lg p-5 grid md:grid-cols-2 gap-3">
+                <h3 className="md:col-span-2 font-semibold text-sm">Record farmer payout</h3>
+                <select
+                  required
+                  className="border rounded px-3 py-2 text-sm"
+                  value={payoutForm.farmerId}
+                  onChange={(e) => setPayoutForm({ ...payoutForm, farmerId: e.target.value })}
+                >
+                  <option value="">Select farmer</option>
+                  {farmers.map((f) => (
+                    <option key={f._id} value={f._id}>
+                      {f.name}
+                    </option>
                   ))}
-                  {farmerPerformance.length === 0 && (
-                    <tr><td colSpan="4" className="p-4 text-center text-gray-400 text-sm">No data yet.</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-              <h3 className="font-semibold text-gray-700 mb-3">Monthly Summary</h3>
-              <table className="w-full text-left border-collapse">
-                <thead className="border-b">
-                  <tr>
-                    <th className="p-2 text-sm font-semibold text-gray-600">Month</th>
-                    <th className="p-2 text-sm font-semibold text-gray-600">Intake (Kg)</th>
-                    <th className="p-2 text-sm font-semibold text-gray-600">Revenue</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {monthlyReport.map((m) => (
-                    <tr key={m.month} className="border-b">
-                      <td className="p-2 text-sm">{m.month}</td>
-                      <td className="p-2 text-sm">{m.intakeKg} kg</td>
-                      <td className="p-2 text-sm">₹{m.revenue}</td>
-                    </tr>
+                </select>
+                <select
+                  className="border rounded px-3 py-2 text-sm"
+                  value={payoutForm.batchId}
+                  onChange={(e) => setPayoutForm({ ...payoutForm, batchId: e.target.value })}
+                >
+                  <option value="">Batch (optional)</option>
+                  {batches.map((b) => (
+                    <option key={b._id} value={b._id}>
+                      {b.batchId}
+                    </option>
                   ))}
-                  {monthlyReport.length === 0 && (
-                    <tr><td colSpan="3" className="p-4 text-center text-gray-400 text-sm">No data yet.</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* Tab 6: Settings — NEW. KYC upload + staff management both already had
-            working backend endpoints (POST /fpo/kyc, POST /fpo/staff) with no UI. */}
-        {activeTab === 'settings' && (
-          <div className="space-y-6">
-            <h2 className="text-2xl font-bold text-gray-800">FPO Settings</h2>
-
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-              <h3 className="font-semibold text-gray-700 text-base border-b pb-2 mb-4">FPO Profile</h3>
-              <div className="grid grid-cols-2 gap-2 text-sm">
-                <p className="text-gray-500">Name</p><p className="text-gray-800">{fpoProfile.name}</p>
-                <p className="text-gray-500">Registration No.</p><p className="text-gray-800">{fpoProfile.registrationNumber}</p>
-                <p className="text-gray-500">KYC Status</p>
-                <p>
-                  <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
-                    fpoProfile.kycStatus === 'Verified' ? 'bg-green-100 text-green-700' :
-                    fpoProfile.kycStatus === 'Rejected' ? 'bg-red-100 text-red-700' :
-                    'bg-yellow-100 text-yellow-700'
-                  }`}>
-                    {fpoProfile.kycStatus}
-                  </span>
-                </p>
-                <p className="text-gray-500">Contact Phone</p><p className="text-gray-800">{fpoProfile.contactDetails?.phone || '—'}</p>
-                <p className="text-gray-500">Contact Email</p><p className="text-gray-800">{fpoProfile.contactDetails?.email || '—'}</p>
-                <p className="text-gray-500">Address</p><p className="text-gray-800">{fpoProfile.contactDetails?.address || '—'}</p>
-              </div>
-            </div>
-
-            {/* NEW: KYC document upload */}
-            <form onSubmit={handleKycUpload} className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 space-y-3">
-              <h3 className="font-semibold text-gray-700 text-base border-b pb-2">Upload KYC Documents</h3>
-              <p className="text-xs text-gray-500">Up to 5 files (registration certificate, PAN, bank proof, etc.)</p>
-              <input
-                type="file"
-                multiple
-                onChange={(e) => setKycFiles(Array.from(e.target.files).slice(0, 5))}
-                className="block w-full text-sm text-gray-600"
-              />
-              {kycFiles.length > 0 && <p className="text-xs text-gray-500">{kycFiles.length} file(s) selected</p>}
-              <button
-                disabled={kycFiles.length === 0 || kycUploading}
-                className="bg-emerald-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-emerald-700 transition disabled:opacity-50"
-              >
-                {kycUploading ? 'Uploading...' : 'Upload Documents'}
-              </button>
-              {fpoProfile.kycDocuments?.length > 0 && (
-                <p className="text-xs text-gray-500">{fpoProfile.kycDocuments.length} document(s) already on file.</p>
-              )}
-            </form>
-
-            {/* NEW: Staff management */}
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-              <h3 className="font-semibold text-gray-700 text-base border-b pb-2 mb-4">Staff Members</h3>
-              <form onSubmit={handleAddStaff} className="grid grid-cols-2 gap-4 mb-4">
+                </select>
                 <input
-                  type="text"
-                  placeholder="Staff Full Name"
-                  value={staffForm.name}
-                  onChange={(e) => setStaffForm({ ...staffForm, name: e.target.value })}
-                  className="p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
                   required
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="Amount ₹"
+                  className="border rounded px-3 py-2 text-sm"
+                  value={payoutForm.amount}
+                  onChange={(e) => setPayoutForm({ ...payoutForm, amount: e.target.value })}
                 />
                 <input
-                  type="email"
-                  placeholder="Email"
-                  value={staffForm.email}
-                  onChange={(e) => setStaffForm({ ...staffForm, email: e.target.value })}
-                  className="p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
-                  required
+                  placeholder="Transaction ID"
+                  className="border rounded px-3 py-2 text-sm"
+                  value={payoutForm.transactionId}
+                  onChange={(e) => setPayoutForm({ ...payoutForm, transactionId: e.target.value })}
                 />
-                <input
-                  type="password"
-                  placeholder="Temporary Password"
-                  value={staffForm.password}
-                  onChange={(e) => setStaffForm({ ...staffForm, password: e.target.value })}
-                  className="p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
-                  required
-                />
-                <input
-                  type="text"
-                  placeholder="Location"
-                  value={staffForm.location}
-                  onChange={(e) => setStaffForm({ ...staffForm, location: e.target.value })}
-                  className="p-2.5 border rounded-lg outline-none focus:ring-2 focus:ring-emerald-500"
-                  required
-                />
-                <button className="col-span-2 bg-emerald-600 text-white py-2.5 rounded-lg font-medium hover:bg-emerald-700 transition">
-                  Add Staff Member
+                <button type="submit" className="bg-emerald-700 text-white text-sm px-4 py-2 rounded">
+                  Save payout
                 </button>
               </form>
 
-              <table className="w-full text-left border-collapse">
-                <thead className="bg-gray-50 border-b">
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={downloadPayoutCsv}
+                  className="text-sm border px-3 py-1.5 rounded hover:bg-slate-50"
+                >
+                  Download payout CSV
+                </button>
+              </div>
+
+              <div className="bg-white border rounded-lg overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 border-b text-slate-600">
+                    <tr>
+                      <th className="text-left px-4 py-2">Farmer</th>
+                      <th className="text-left px-4 py-2">Amount</th>
+                      <th className="text-left px-4 py-2">Method</th>
+                      <th className="text-left px-4 py-2">Funded from</th>
+                      <th className="text-left px-4 py-2">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {payouts.map((p) => (
+                      <tr key={p._id} className="border-b">
+                        <td className="px-4 py-2">{p.farmer?.name || '—'}</td>
+                        <td className="px-4 py-2">₹{p.amount || p.totalAmount}</td>
+                        <td className="px-4 py-2">{p.paymentMethod}</td>
+                        <td className="px-4 py-2">{p.fundedFrom}</td>
+                        <td className="px-4 py-2">{p.status}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* REPORTS */}
+          {activeTab === 'reports' && (
+            <div className="bg-white border rounded-lg p-6 space-y-4">
+              <h3 className="font-semibold text-slate-800">Compliance reports</h3>
+              <p className="text-sm text-slate-600">
+                Generate farmer payment statements from the Farmers tab (Statement button). Download
+                the consolidated payout register as CSV below. For formal PDF filings, use the print
+                dialog on each statement (Save as PDF).
+              </p>
+              <button
+                type="button"
+                onClick={downloadPayoutCsv}
+                className="bg-slate-800 text-white text-sm px-4 py-2 rounded"
+              >
+                Download payout register (CSV)
+              </button>
+            </div>
+          )}
+
+          {/* AUDIT */}
+          {activeTab === 'audit' && (
+            <div className="bg-white border rounded-lg overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 border-b text-slate-600">
                   <tr>
-                    <th className="p-3 text-sm font-semibold text-gray-600">Name</th>
-                    <th className="p-3 text-sm font-semibold text-gray-600">Email</th>
-                    <th className="p-3 text-sm font-semibold text-gray-600">Location</th>
+                    <th className="text-left px-4 py-2">When</th>
+                    <th className="text-left px-4 py-2">Actor</th>
+                    <th className="text-left px-4 py-2">Action</th>
+                    <th className="text-left px-4 py-2">Summary</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {(fpoProfile.staff || []).map((s) => (
-                    <tr key={s._id} className="border-b">
-                      <td className="p-3 text-gray-800">{s.name}</td>
-                      <td className="p-3 text-gray-600">{s.email}</td>
-                      <td className="p-3 text-gray-600">{s.location}</td>
+                  {activityLogs.map((log) => (
+                    <tr key={log._id} className="border-b">
+                      <td className="px-4 py-2 text-xs text-slate-500">
+                        {new Date(log.createdAt).toLocaleString()}
+                      </td>
+                      <td className="px-4 py-2">
+                        {log.actorName}{' '}
+                        <span className="text-xs text-slate-400">({log.actorRole})</span>
+                      </td>
+                      <td className="px-4 py-2 font-mono text-xs">{log.action}</td>
+                      <td className="px-4 py-2">{log.summary}</td>
                     </tr>
                   ))}
-                  {(!fpoProfile.staff || fpoProfile.staff.length === 0) && (
+                  {!activityLogs.length && (
                     <tr>
-                      <td colSpan="3" className="p-4 text-center text-gray-500">No staff added yet.</td>
+                      <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
+                        No audit entries yet. Actions are logged as you use the portal.
+                      </td>
                     </tr>
                   )}
                 </tbody>
               </table>
             </div>
-          </div>
-        )}
-      </main>
+          )}
+
+          {/* SETTINGS */}
+          {activeTab === 'settings' && fpoProfile && (
+            <div className="grid lg:grid-cols-2 gap-6">
+              <div className="bg-white border rounded-lg p-5 space-y-3">
+                <h3 className="font-semibold text-sm">Organisation profile</h3>
+                <p className="text-sm text-slate-700">
+                  <span className="text-slate-500">Name:</span> {fpoProfile.name}
+                </p>
+                <p className="text-sm text-slate-700">
+                  <span className="text-slate-500">Registration:</span>{' '}
+                  {fpoProfile.registrationNumber}
+                </p>
+                <p className="text-sm text-slate-700">
+                  <span className="text-slate-500">Type:</span>{' '}
+                  {fpoProfile.registrationType || '—'}
+                </p>
+                <p className="text-sm text-slate-700">
+                  <span className="text-slate-500">PAN / GSTIN:</span> {fpoProfile.pan || '—'} /{' '}
+                  {fpoProfile.gstin || '—'}
+                </p>
+                <p className="text-sm">
+                  <span
+                    className={`inline-block text-xs font-semibold px-2 py-0.5 rounded border ${kycBadge(
+                      fpoProfile.kycStatus
+                    )}`}
+                  >
+                    KYC {fpoProfile.kycStatus}
+                  </span>
+                </p>
+              </div>
+
+              <div className="bg-white border rounded-lg p-5 space-y-3">
+                <h3 className="font-semibold text-sm">Upload KYC documents</h3>
+                <input
+                  type="file"
+                  multiple
+                  onChange={(e) => setKycFiles(Array.from(e.target.files || []))}
+                />
+                <button
+                  type="button"
+                  onClick={uploadKyc}
+                  disabled={!kycFiles.length}
+                  className="bg-emerald-700 text-white text-sm px-4 py-2 rounded disabled:opacity-40"
+                >
+                  Upload
+                </button>
+                <p className="text-xs text-slate-500">
+                  {fpoProfile.kycDocuments?.length || 0} document(s) on file
+                </p>
+              </div>
+
+              {user?.role === 'fpo_admin' && (
+                <form onSubmit={addStaff} className="bg-white border rounded-lg p-5 space-y-3 lg:col-span-2">
+                  <h3 className="font-semibold text-sm">Add staff user</h3>
+                  <div className="grid md:grid-cols-4 gap-3">
+                    <input
+                      required
+                      placeholder="Name"
+                      className="border rounded px-3 py-2 text-sm"
+                      value={staffForm.name}
+                      onChange={(e) => setStaffForm({ ...staffForm, name: e.target.value })}
+                    />
+                    <input
+                      required
+                      type="email"
+                      placeholder="Email"
+                      className="border rounded px-3 py-2 text-sm"
+                      value={staffForm.email}
+                      onChange={(e) => setStaffForm({ ...staffForm, email: e.target.value })}
+                    />
+                    <input
+                      required
+                      type="password"
+                      placeholder="Password"
+                      className="border rounded px-3 py-2 text-sm"
+                      value={staffForm.password}
+                      onChange={(e) => setStaffForm({ ...staffForm, password: e.target.value })}
+                    />
+                    <input
+                      placeholder="Location"
+                      className="border rounded px-3 py-2 text-sm"
+                      value={staffForm.location}
+                      onChange={(e) => setStaffForm({ ...staffForm, location: e.target.value })}
+                    />
+                  </div>
+                  <button type="submit" className="bg-slate-800 text-white text-sm px-4 py-2 rounded">
+                    Add staff
+                  </button>
+                </form>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'completion' && (
+            <FpoCompletionPanel
+              profile={fpoProfile}
+              farmers={farmers}
+              batches={batches}
+              onRefresh={() => {
+                loadProfile();
+                loadAll();
+              }}
+            />
+          )}
+        </main>
+      </div>
     </div>
   );
 }

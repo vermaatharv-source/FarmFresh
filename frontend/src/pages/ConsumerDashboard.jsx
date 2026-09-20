@@ -12,6 +12,7 @@ import SubscriptionModal from '../components/SubscriptionModal';
 import InvoiceModal from '../components/InvoiceModal';
 import TraceabilityModal from '../components/TraceabilityModal';
 import HelpSupportModal from '../components/HelpSupportModal';
+import BrandLogo from '../components/BrandLogo';
 
 export default function ConsumerDashboard() {
   const { user, logout, updateUser } = useAuth();
@@ -469,11 +470,10 @@ export default function ConsumerDashboard() {
       <div className="absolute top-1/3 -left-32 w-[28rem] h-[28rem] bg-emerald-300 rounded-full blur-3xl opacity-30 pointer-events-none" />
 
       {/* Header */}
-      <header className="relative z-10 bg-white/80 backdrop-blur border-b border-emerald-100 sticky top-0">
+      <header className="relative z-[200] bg-white/80 backdrop-blur border-b border-emerald-100 sticky top-0">
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <span className="text-2xl">🌾</span>
-            <h1 className="text-xl font-bold text-emerald-800">FarmFresh</h1>
+            <BrandLogo size="sm" />
           </div>
           <div className="flex items-center gap-2 sm:gap-3">
             {/* Notifications Hub */}
@@ -704,7 +704,14 @@ export default function ConsumerDashboard() {
 
                   <div className="p-4">
                     <h3 className="font-semibold text-gray-900">{item.produceType}</h3>
-                    <p className="text-xs text-gray-500">{item.fpo?.name}</p>
+                    <p className="text-xs text-gray-500 flex flex-wrap items-center gap-1">
+                      <span>{item.fpo?.name}</span>
+                      {item.fpo?.kycStatus === 'Verified' && (
+                        <span className="text-[10px] font-semibold bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded">
+                          Verified FPO
+                        </span>
+                      )}
+                    </p>
                     <p className="text-green-700 font-bold mt-1">
                       ₹{item.pricePerKg}
                       <span className="text-xs font-normal text-gray-500">/kg</span>

@@ -5,6 +5,7 @@ import ConsumerDashboard from './pages/ConsumerDashboard';
 import FpoDashboard from './pages/FpoDashboard';
 import TraceabilityPassport from './pages/TraceabilityPassport';
 import FpoListingDetail from './pages/FpoListingDetail';
+import AdminDashboard from './pages/AdminDashboard';
 import ProtectedRoute from './components/ProtectedRoute';
 
 function App() {
@@ -23,10 +24,8 @@ function App() {
         }
       />
 
-      {/* Product Detail Page */}
       <Route path="/listing/:id" element={<FpoListingDetail />} />
 
-      {/* FPO Portal */}
       <Route
         path="/fpo/dashboard"
         element={
@@ -36,7 +35,16 @@ function App() {
         }
       />
 
-      {/* Public Traceability */}
+      {/* Authority / Government read-only portal */}
+      <Route
+        path="/admin/dashboard"
+        element={
+          <ProtectedRoute allowedRoles={['admin']}>
+            <AdminDashboard />
+          </ProtectedRoute>
+        }
+      />
+
       <Route path="/trace/:batchId" element={<TraceabilityPassport />} />
     </Routes>
   );

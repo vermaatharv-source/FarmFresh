@@ -87,7 +87,7 @@ exports.getMyListings = async (req, res) => {
   }
 };
 
-// PUBLIC listings with filters
+// PUBLIC listings with filters (+ KYC for Verified badge)
 exports.getPublicListings = async (req, res) => {
   try {
     const filter = { status: 'Published', availableQuantityKg: { $gt: 0 } };
@@ -105,7 +105,10 @@ exports.getPublicListings = async (req, res) => {
     if (req.query.minPrice) filter.pricePerKg = { ...filter.pricePerKg, $gte: Number(req.query.minPrice) };
     if (req.query.maxPrice) filter.pricePerKg = { ...filter.pricePerKg, $lte: Number(req.query.maxPrice) };
 
-    let query = Listing.find(filter).populate('fpo', 'name contactDetails');
+    let query = Listing.find(filter).populate(
+      'fpo',
+      'name contactDetails registrationNumber kycStatus registrationType'
+    );
 
     const sortBy = req.query.sort || 'newest';
     if (sortBy === 'price_asc') query = query.sort({ pricePerKg: 1 });
@@ -120,17 +123,21 @@ exports.getPublicListings = async (req, res) => {
   }
 };
 
-// GET single public listing with full details
+// GET single public listing with full details (+ KYC for Verified badge)
 exports.getPublicListingById = async (req, res) => {
   try {
     const listing = await Listing.findOne({
       _id: req.params.id,
       status: 'Published',
     })
-      .populate('fpo', 'name contactDetails registrationNumber district state')
+      .populate(
+        'fpo',
+        'name contactDetails registrationNumber registrationType kycStatus district state'
+      )
       .populate({
         path: 'sourceBatch',
-        select: 'batchId produceType rawQuantityKg harvestDate collectionDate grading pricingSnapshot qrCodeUrl',
+        select:
+          'batchId produceType rawQuantityKg harvestDate collectionDate grading pricingSnapshot qrCodeUrl',
         populate: { path: 'farmer', select: 'name village phone' },
       });
 
