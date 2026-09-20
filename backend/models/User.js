@@ -60,6 +60,8 @@ const userSchema = new mongoose.Schema({
     lowercase: true,
     trim: true 
   },
+  // When the user accepted the Terms and Privacy Notice at sign-up
+  consentAcceptedAt: { type: Date },
   phone: {
     type: String,
     default: '',

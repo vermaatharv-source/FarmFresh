@@ -12,6 +12,8 @@ const csv = require('csv-parser');
 const QRCode = require('qrcode');
 const { notify } = require('../utils/notify');
 const { validateFpoDetails } = require('../utils/fpoValidation');
+const { normalizeEmail, isValidEmail, passwordProblem } = require('../utils/authValidation');
+const { hasSignature } = require('../middleware/upload');
 const GradePriceConfig = require('../models/GradePriceConfig');
 const FpoOrder = require('../models/FpoOrder');
 const Listing = require('../models/Listing');
@@ -100,7 +102,17 @@ exports.uploadKyc = async (req, res) => {
       return res.status(400).json({ message: 'No documents uploaded.' });
     }
 
-    const documentPaths = req.files.map((file) => file.path);
+    // Check the real file type (first bytes), not just the declared MIME type.
+    const genuine = req.files.every((f) => hasSignature(f.path, ['pdf', 'png', 'jpg']));
+    if (!genuine) {
+      req.files.forEach((f) => {
+        try { fs.unlinkSync(f.path); } catch (_) {}
+      });
+      return res.status(400).json({ message: 'One of the files is not a valid PDF, JPG or PNG document.' });
+    }
+
+    // Stored as private_uploads/<name>; never served publicly (see kycController).
+    const documentPaths = req.files.map((file) => `private_uploads/${file.filename}`);
     fpo.kycDocuments.push(...documentPaths);
     fpo.kycStatus = 'Pending';
     await fpo.save();
@@ -115,12 +127,19 @@ exports.uploadKyc = async (req, res) => {
 exports.addStaff = async (req, res) => {
   try {
     const userId = req.user._id || req.user.id;
-    const { name, email, password, location } = req.body;
+    const { name, location } = req.body;
+    const email = normalizeEmail(req.body.email);
+    const password = req.body.password;
 
     const fpo = await Fpo.findOne({ adminUser: userId });
     if (!fpo) {
       return res.status(404).json({ message: 'FPO not found or unauthorized.' });
     }
+    if (!name || !isValidEmail(email)) {
+      return res.status(400).json({ message: 'A name and a valid email are required.' });
+    }
+    const pwProblem = passwordProblem(password);
+    if (pwProblem) return res.status(400).json({ message: pwProblem });
 
     const existingUser = await User.findOne({ email });
     if (existingUser) {
@@ -773,12 +792,12 @@ exports.getBatchTraceability = async (req, res) => {
     const { batchId } = req.params;
 
     let batch = await Batch.findOne({ batchId })
-      .populate('farmer', 'name address village phone')
+      .populate('farmer', 'name address village')
       .populate('fpo', 'name contactDetails registrationNumber');
 
     if (!batch && mongoose.Types.ObjectId.isValid(batchId)) {
       batch = await Batch.findById(batchId)
-        .populate('farmer', 'name address village phone')
+        .populate('farmer', 'name address village')
         .populate('fpo', 'name contactDetails registrationNumber');
     }
 
@@ -808,7 +827,6 @@ exports.getBatchTraceability = async (req, res) => {
         region: batch.farmer
           ? batch.farmer.village || batch.farmer.address || 'N/A'
           : 'N/A',
-        phone: batch.farmer?.phone || null,
       },
       fpo: {
         name: batch.fpo ? batch.fpo.name : 'N/A',
@@ -907,6 +925,14 @@ exports.verifyKyc = async (req, res) => {
     const { status, reason } = req.body;
     if (!['Pending', 'Verified', 'Rejected'].includes(status))
       return res.status(400).json({ message: 'Invalid KYC status.' });
+    const current = await Fpo.findById(req.params.fpoId).select('kycDocuments');
+    if (!current) return res.status(404).json({ message: 'FPO not found.' });
+    if (status === 'Verified' && !(current.kycDocuments || []).length) {
+      return res.status(400).json({ message: 'Cannot verify: the FPO has not uploaded any KYC documents.' });
+    }
+    if (status === 'Rejected' && !String(reason || '').trim()) {
+      return res.status(400).json({ message: 'A rejection reason is required so the FPO knows what to correct.' });
+    }
     const f = await Fpo.findByIdAndUpdate(
       req.params.fpoId,
       {

@@ -13,6 +13,9 @@ const Fpo = require('../models/Fpo');
 const { logActivity } = require('../utils/activityLogger');
 const { maskAccountNumber, looksMasked } = require('../utils/privacy');
 const fs = require('fs');
+const path = require('path');
+const csvParser = require('csv-parser');
+const { hasSignature } = require('../middleware/upload');
 
 const getFpoIdForUser = async (userId) => {
   if (!userId) return null;
@@ -190,16 +193,53 @@ exports.updateFarmer = async (req, res) => {
   }
 };
 
+const MAX_IMPORT_ROWS = 5000;
+
+// Reads an uploaded .xlsx (or .csv) into an array of { header: value } rows.
+// Uses read-excel-file, which has no known vulnerabilities, instead of the
+// unmaintained xlsx package.
+async function readImportRows(file) {
+  const ext = path.extname(file.originalname || file.path).toLowerCase();
+
+  if (ext === '.csv') {
+    return new Promise((resolve, reject) => {
+      const out = [];
+      fs.createReadStream(file.path)
+        .pipe(csvParser())
+        .on('data', (row) => out.push(row))
+        .on('end', () => resolve(out))
+        .on('error', reject);
+    });
+  }
+
+  if (!hasSignature(file.path, ['xlsx'])) {
+    throw new Error('The file is not a valid .xlsx workbook.');
+  }
+  const { default: readXlsxFile } = await import('read-excel-file/node');
+  const sheets = await readXlsxFile(file.path);
+  const table = (sheets[0] && sheets[0].data) || [];
+  if (table.length < 2) return [];
+  const header = table[0].map((h) => String(h || '').trim());
+  return table.slice(1).map((cells) => {
+    const row = {};
+    header.forEach((h, i) => {
+      if (h && cells[i] !== null && cells[i] !== undefined) row[h] = cells[i];
+    });
+    return row;
+  });
+}
+
 exports.importFarmersExcel = async (req, res) => {
   try {
     const fpoId = await getFpoIdForUser(req.user._id || req.user.id);
     if (!fpoId) return res.status(400).json({ message: 'Associated FPO profile not found.' });
     if (!req.file) return res.status(400).json({ message: 'Please upload an Excel/CSV file.' });
 
-    const XLSX = require('xlsx');
-    const wb = XLSX.readFile(req.file.path);
-    const sheet = wb.Sheets[wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(sheet);
+    const rows = await readImportRows(req.file);
+    if (rows.length > MAX_IMPORT_ROWS) {
+      try { fs.unlinkSync(req.file.path); } catch (_) {}
+      return res.status(400).json({ message: `A file can contain at most ${MAX_IMPORT_ROWS} rows. Please split it.` });
+    }
 
     const docs = rows
       .filter((r) => r.name && r.phone)
@@ -255,7 +295,11 @@ exports.importFarmersExcel = async (req, res) => {
     try {
       if (req.file?.path) fs.unlinkSync(req.file.path);
     } catch (_) {}
-    res.status(500).json({ message: 'Import failed.', error: e.message });
+    const badFile = /not a valid|xlsx/i.test(e.message || '');
+    res.status(badFile ? 400 : 500).json({
+      message: badFile ? 'The file could not be read. Please upload a valid .xlsx or .csv file.' : 'Import failed.',
+      error: e.message,
+    });
   }
 };
 

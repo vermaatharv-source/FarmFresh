@@ -8,6 +8,7 @@ const gradePriceConfigSchema = new mongoose.Schema({
   referenceMarketPrice:{type:Number,default:0,min:0},
   effectiveFrom:{type:Date,default:Date.now,index:true},
   isActive:{type:Boolean,default:true,index:true},
+  pricingSource:{type:String,enum:['MANUAL','AUTO_MANDI'],default:'MANUAL'},
   createdBy:{type:mongoose.Schema.Types.ObjectId,ref:'User'},
   updatedBy:{type:mongoose.Schema.Types.ObjectId,ref:'User'}
 },{timestamps:true});

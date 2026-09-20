@@ -37,6 +37,7 @@ const activityLogSchema = new mongoose.Schema(
         'ORDER_STATUS',
         'PROFILE_UPDATE',
         'BANK_DETAILS_VIEW',
+        'KYC_DOCUMENT_VIEW',
         'OTHER',
       ],
     },

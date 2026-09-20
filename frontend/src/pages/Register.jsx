@@ -37,12 +37,15 @@ function Register() {
     setFpoDetails({ ...fpoDetails, [e.target.name]: e.target.value });
   };
 
+  const [acceptTerms, setAcceptTerms] = useState(false);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
     setLoading(true);
     try {
-      const payload = formData.role === 'fpo_admin' ? { ...formData, fpoDetails } : formData;
+      const base = { ...formData, acceptTerms };
+      const payload = formData.role === 'fpo_admin' ? { ...base, fpoDetails } : base;
       const res = await API.post('/auth/register', payload);
       login(res.data.user, res.data.token);
 
@@ -167,9 +170,11 @@ function Register() {
                 value={formData.password}
                 onChange={handleChange}
                 required
+                minLength={8}
                 className="w-full border border-gray-300 rounded-lg px-4 py-2.5 outline-none transition focus:ring-2 focus:ring-green-500"
                 placeholder="Enter password"
               />
+              <p className="text-xs text-gray-500 mt-1">At least 8 characters, with a letter and a number.</p>
             </div>
             {formData.role === 'fpo_admin' && (
               <div className="border border-green-200 bg-green-50/40 rounded-xl p-4 space-y-3">
@@ -309,9 +314,25 @@ function Register() {
               />
             </div>
 
+            <label className="flex items-start gap-2 text-sm text-gray-600">
+              <input
+                type="checkbox"
+                checked={acceptTerms}
+                onChange={(e) => setAcceptTerms(e.target.checked)}
+                className="mt-1"
+              />
+              <span>
+                I have read and agree to the{' '}
+                <a href="/privacy" target="_blank" rel="noopener noreferrer" className="text-green-700 font-semibold hover:underline">
+                  Privacy Notice and Terms
+                </a>
+                .
+              </span>
+            </label>
+
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || !acceptTerms}
               className="w-full bg-green-600 text-white py-2.5 rounded-lg font-semibold hover:bg-green-700 transition disabled:opacity-60 mt-2"
             >
               {loading ? 'Creating account...' : 'Create Account'}

@@ -124,6 +124,11 @@ function Login() {
               Sign up
             </Link>
           </p>
+          <p className="text-xs text-center text-gray-400 mt-3">
+            <a href="/privacy" target="_blank" rel="noopener noreferrer" className="hover:underline">
+              Privacy Notice
+            </a>
+          </p>
         </div>
       </div>
     </div>

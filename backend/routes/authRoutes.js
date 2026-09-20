@@ -5,19 +5,39 @@ const User = require('../models/User');
 const Fpo = require('../models/Fpo'); // 1. Require Fpo model
 const { protect } = require('../middleware/authMiddleware');
 const { validateFpoDetails } = require('../utils/fpoValidation');
+const { normalizeEmail, isValidEmail, passwordProblem } = require('../utils/authValidation');
 
 const router = express.Router();
 
 // Register
 router.post('/register', async (req, res) => {
   try {
-    const { name, email, password, role, location, phone } = req.body;
+    const { name, password, role, location, phone, acceptTerms } = req.body;
+    const email = normalizeEmail(req.body.email);
 
     // Farmers are not user accounts - FPOs onboard and manage them.
     if (String(role || '').toLowerCase() === 'farmer') {
       return res.status(400).json({
         message: 'Farmer accounts are no longer supported. Farmers are onboarded and managed by their FPO.',
       });
+    }
+
+    // Basic input checks (strings only, sensible lengths, strong password).
+    if (typeof name !== 'string' || name.trim().length < 2 || name.length > 100) {
+      return res.status(400).json({ message: 'Please enter your full name.' });
+    }
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ message: 'Please enter a valid email address.' });
+    }
+    const pwProblem = passwordProblem(password);
+    if (pwProblem) {
+      return res.status(400).json({ message: pwProblem });
+    }
+    if (typeof location !== 'string' || !location.trim()) {
+      return res.status(400).json({ message: 'Location is required.' });
+    }
+    if (acceptTerms !== true) {
+      return res.status(400).json({ message: 'You must accept the Terms and Privacy Notice to create an account.' });
     }
 
     // Only consumers and FPO admins can self-register. FPO staff are created by
@@ -47,15 +67,16 @@ router.post('/register', async (req, res) => {
       return res.status(400).json({ message: 'User already exists' });
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const hashedPassword = await bcrypt.hash(password, 12);
 
     const user = await User.create({
       name,
       email,
       phone: phone || '',
       password: hashedPassword,
-      role,
-      location,
+      role: signupRole,
+      location: location.trim(),
+      consentAcceptedAt: new Date(),
     });
 
     // 2. Automatically create FPO profile document if registering as FPO Admin
@@ -105,7 +126,11 @@ router.post('/register', async (req, res) => {
 // Login
 router.post('/login', async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const email = normalizeEmail(req.body.email);
+    const password = req.body.password;
+    if (!email || typeof password !== 'string' || !password) {
+      return res.status(400).json({ message: 'Invalid credentials' });
+    }
 
     const user = await User.findOne({ email });
     if (!user) {

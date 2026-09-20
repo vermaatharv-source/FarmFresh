@@ -6,6 +6,7 @@ import FpoDashboard from './pages/FpoDashboard';
 import TraceabilityPassport from './pages/TraceabilityPassport';
 import FpoListingDetail from './pages/FpoListingDetail';
 import AdminDashboard from './pages/AdminDashboard';
+import PrivacyPolicy from './pages/PrivacyPolicy';
 import ProtectedRoute from './components/ProtectedRoute';
 
 function App() {
@@ -46,6 +47,7 @@ function App() {
       />
 
       <Route path="/trace/:batchId" element={<TraceabilityPassport />} />
+      <Route path="/privacy" element={<PrivacyPolicy />} />
     </Routes>
   );
 }

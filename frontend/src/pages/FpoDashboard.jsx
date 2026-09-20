@@ -85,6 +85,9 @@ export default function FpoDashboard() {
     amount: '',
     transactionId: '',
   });
+  const [orderCooldown, setOrderCooldown] = useState({}); // orderId -> timestamp ms
+  const [listingImages, setListingImages] = useState([]);
+  const [lastIntakeQr, setLastIntakeQr] = useState(null);
   const [listingForm, setListingForm] = useState({
     produceType: '',
     grade: 'A',
@@ -220,11 +223,13 @@ export default function FpoDashboard() {
   const submitIntake = async (e) => {
     e.preventDefault();
     try {
-      await API.post('/fpo/batches/intake', {
+      const res = await API.post('/fpo/batches/intake', {
         ...intakeForm,
         rawQuantityKg: Number(intakeForm.rawQuantityKg),
       });
-      flash('Intake recorded');
+      const batch = res.data?.batch || res.data;
+      setLastIntakeQr(batch?.qrCodeUrl || null);
+      flash(batch?.batchId ? `Intake recorded — ${batch.batchId}` : 'Intake recorded');
       setIntakeForm({ farmerId: '', produceType: '', rawQuantityKg: '', harvestDate: '' });
       loadAll();
     } catch (e) {
@@ -252,12 +257,15 @@ export default function FpoDashboard() {
   // —— Payout ——
   const submitPayout = async (e) => {
     e.preventDefault();
+    if (!payoutForm.farmerId || !payoutForm.batchId) {
+      flash('Select farmer and batch', true);
+      return;
+    }
     try {
       await API.post('/fpo/payouts', {
         farmerId: payoutForm.farmerId,
-        batchId: payoutForm.batchId || undefined,
-        amount: Number(payoutForm.amount),
-        transactionId: payoutForm.transactionId,
+        batchId: payoutForm.batchId,
+        transactionId: payoutForm.transactionId || undefined,
       });
       flash('Payout recorded');
       setPayoutForm({ farmerId: '', batchId: '', amount: '', transactionId: '' });
@@ -267,17 +275,71 @@ export default function FpoDashboard() {
     }
   };
 
+  const onPayoutFarmerChange = (farmerId) => {
+    setPayoutForm({ farmerId, batchId: '', amount: '', transactionId: payoutForm.transactionId });
+  };
+
+  const onPayoutBatchChange = (batchId) => {
+    const b = batches.find((x) => x._id === batchId);
+    setPayoutForm({
+      ...payoutForm,
+      batchId,
+      amount: b ? String(b.amountOwedToFarmer || 0) : '',
+    });
+  };
+
+  const updateOrderStatus = async (orderId, status) => {
+    const last = orderCooldown[orderId] || 0;
+    if (Date.now() - last < 30000) {
+      const wait = Math.ceil((30000 - (Date.now() - last)) / 1000);
+      flash(`Wait ${wait}s before next status change`, true);
+      return;
+    }
+    try {
+      await API.patch(`/fpo-orders/${orderId}/status`, { status });
+      setOrderCooldown((prev) => ({ ...prev, [orderId]: Date.now() }));
+      flash(`Order marked ${status}`);
+      loadAll();
+    } catch (e) {
+      flash(e.response?.data?.message || 'Status update failed', true);
+    }
+  };
+
+  const nextStatuses = (current) => {
+    const map = {
+      Placed: ['Accepted', 'Rejected'],
+      Accepted: ['Packed', 'Cancelled'],
+      Packed: ['Dispatched', 'Cancelled'],
+      Dispatched: ['Delivered'],
+    };
+    return map[current] || [];
+  };
+
   // —— Listing ——
   const submitListing = async (e) => {
     e.preventDefault();
     try {
-      await API.post('/listings', {
-        ...listingForm,
-        pricePerKg: Number(listingForm.pricePerKg),
-        availableQuantityKg: Number(listingForm.availableQuantityKg),
-        minOrderQtyKg: Number(listingForm.minOrderQtyKg) || 1,
+      const fd = new FormData();
+      fd.append('produceType', listingForm.produceType);
+      fd.append('grade', listingForm.grade);
+      fd.append('pricePerKg', String(Number(listingForm.pricePerKg)));
+      fd.append('availableQuantityKg', String(Number(listingForm.availableQuantityKg)));
+      fd.append('minOrderQtyKg', String(Number(listingForm.minOrderQtyKg) || 1));
+      if (listingForm.description) fd.append('description', listingForm.description);
+      if (listingForm.sourceBatch) fd.append('sourceBatch', listingForm.sourceBatch);
+      (listingImages || []).forEach((file) => fd.append('images', file));
+      await API.post('/listings', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+      flash('Listing created');
+      setListingForm({
+        produceType: '',
+        grade: 'A',
+        pricePerKg: '',
+        availableQuantityKg: '',
+        minOrderQtyKg: '1',
+        description: '',
+        sourceBatch: '',
       });
-      flash('Listing created (draft)');
+      setListingImages([]);
       loadAll();
     } catch (e) {
       flash(e.response?.data?.message || 'Listing failed', true);
@@ -306,6 +368,21 @@ export default function FpoDashboard() {
       loadProfile();
     } catch (e) {
       flash(e.response?.data?.message || 'KYC upload failed', true);
+    }
+  };
+
+  // KYC documents are private: fetched with the login token and shown from a temporary local URL.
+  const viewKycDocument = async (index) => {
+    const win = window.open('', '_blank');
+    try {
+      const res = await API.get(`/fpo/kyc/documents/${index}`, { responseType: 'blob' });
+      const url = URL.createObjectURL(res.data);
+      if (win) win.location.href = url;
+      else window.open(url, '_blank');
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (e) {
+      if (win) win.close();
+      flash('Could not open the document', true);
     }
   };
 
@@ -692,6 +769,13 @@ export default function FpoDashboard() {
                 <button type="submit" className="bg-emerald-700 text-white text-sm px-4 py-2 rounded">
                   Save intake
                 </button>
+                {lastIntakeQr && (
+                  <div className="mt-3 p-3 bg-slate-50 border rounded-lg">
+                    <p className="text-xs font-semibold text-slate-700 mb-2">Batch QR code generated</p>
+                    <img src={lastIntakeQr} alt="Batch QR" className="w-36 h-36 bg-white border rounded" />
+                    <p className="text-[11px] text-slate-500 mt-1">Scan or open /trace/&lt;BatchID&gt;</p>
+                  </div>
+                )}
               </form>
 
               <form onSubmit={submitGrading} className="bg-white border rounded-lg p-5 space-y-3">
@@ -746,6 +830,7 @@ export default function FpoDashboard() {
                       <th className="text-left px-4 py-2">Qty</th>
                       <th className="text-left px-4 py-2">Payout</th>
                       <th className="text-left px-4 py-2">Status</th>
+                      <th className="text-left px-4 py-2">QR Code</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -756,6 +841,13 @@ export default function FpoDashboard() {
                         <td className="px-4 py-2">{b.rawQuantityKg} kg</td>
                         <td className="px-4 py-2">₹{b.amountOwedToFarmer || 0}</td>
                         <td className="px-4 py-2">{b.payoutStatus}</td>
+                        <td className="px-4 py-2">
+                          {b.qrCodeUrl ? (
+                            <img src={b.qrCodeUrl} alt="QR" className="w-12 h-12 border rounded bg-white" title={b.batchId} />
+                          ) : (
+                            <span className="text-slate-400 text-xs">—</span>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -775,6 +867,7 @@ export default function FpoDashboard() {
                     <th className="text-left px-4 py-2">Total</th>
                     <th className="text-left px-4 py-2">Reserved</th>
                     <th className="text-left px-4 py-2">Sold</th>
+                    <th className="text-left px-4 py-2">Stock status</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -785,6 +878,17 @@ export default function FpoDashboard() {
                       <td className="px-4 py-2">{i.totalQuantity} kg</td>
                       <td className="px-4 py-2">{i.reservedQuantity} kg</td>
                       <td className="px-4 py-2">{i.soldQuantity} kg</td>
+                        <td className="px-4 py-2">
+                          {(() => {
+                            const free = (i.totalQuantity || 0) - (i.reservedQuantity || 0) - (i.soldQuantity || 0);
+                            const low = free < 100;
+                            return (
+                              <span className={`text-xs font-semibold px-2 py-0.5 rounded ${low ? 'bg-red-100 text-red-800' : 'bg-emerald-100 text-emerald-800'}`}>
+                                {low ? 'Low stock' : 'Sufficient'} ({free} kg)
+                              </span>
+                            );
+                          })()}
+                        </td>
                     </tr>
                   ))}
                   {!inventory.length && (
@@ -858,7 +962,20 @@ export default function FpoDashboard() {
                   value={listingForm.description}
                   onChange={(e) => setListingForm({ ...listingForm, description: e.target.value })}
                 />
-                <button type="submit" className="bg-emerald-700 text-white text-sm px-4 py-2 rounded">
+                                <div className="md:col-span-3">
+                  <label className="block text-xs text-slate-600 mb-1">Product images (optional, up to 5)</label>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="w-full border rounded px-3 py-2 text-sm"
+                    onChange={(e) => setListingImages(Array.from(e.target.files || []).slice(0, 5))}
+                  />
+                  {listingImages?.length > 0 && (
+                    <p className="text-xs text-slate-500 mt-1">{listingImages.length} file(s) selected</p>
+                  )}
+                </div>
+<button type="submit" className="bg-emerald-700 text-white text-sm px-4 py-2 rounded">
                   Create draft
                 </button>
               </form>
@@ -923,6 +1040,7 @@ export default function FpoDashboard() {
                     <th className="text-left px-4 py-2">Qty</th>
                     <th className="text-left px-4 py-2">Total</th>
                     <th className="text-left px-4 py-2">Status</th>
+                    <th className="text-left px-4 py-2">Update status</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -935,7 +1053,34 @@ export default function FpoDashboard() {
                       <td className="px-4 py-2">{o.buyerType}</td>
                       <td className="px-4 py-2">{o.quantityKg} kg</td>
                       <td className="px-4 py-2">₹{o.totalPrice}</td>
-                      <td className="px-4 py-2">{o.status}</td>
+                      <td className="px-4 py-2 font-medium">{o.status}</td>
+                      <td className="px-4 py-2">
+                        <div className="flex flex-wrap gap-1">
+                          {nextStatuses(o.status).map((s) => {
+                            const last = orderCooldown[o._id] || 0;
+                            const cooling = Date.now() - last < 30000;
+                            return (
+                              <button
+                                key={s}
+                                type="button"
+                                disabled={cooling}
+                                onClick={() => updateOrderStatus(o._id, s)}
+                                className={`text-[11px] px-2 py-1 rounded border ${
+                                  cooling
+                                    ? 'opacity-40 cursor-not-allowed bg-slate-100'
+                                    : 'bg-white hover:bg-emerald-50 border-emerald-300 text-emerald-800'
+                                }`}
+                                title={cooling ? 'Wait 30 seconds between status changes' : `Mark ${s}`}
+                              >
+                                {s}
+                              </button>
+                            );
+                          })}
+                          {nextStatuses(o.status).length === 0 && (
+                            <span className="text-xs text-slate-400">No further actions</span>
+                          )}
+                        </div>
+                      </td>
                     </tr>
                   ))}
                   {!fpoOrders.length && (
@@ -959,7 +1104,7 @@ export default function FpoDashboard() {
                   required
                   className="border rounded px-3 py-2 text-sm"
                   value={payoutForm.farmerId}
-                  onChange={(e) => setPayoutForm({ ...payoutForm, farmerId: e.target.value })}
+                  onChange={(e) => onPayoutFarmerChange(e.target.value)}
                 >
                   <option value="">Select farmer</option>
                   {farmers.map((f) => (
@@ -969,26 +1114,31 @@ export default function FpoDashboard() {
                   ))}
                 </select>
                 <select
+                  required
                   className="border rounded px-3 py-2 text-sm"
                   value={payoutForm.batchId}
-                  onChange={(e) => setPayoutForm({ ...payoutForm, batchId: e.target.value })}
+                  onChange={(e) => onPayoutBatchChange(e.target.value)}
+                  disabled={!payoutForm.farmerId}
                 >
-                  <option value="">Batch (optional)</option>
-                  {batches.map((b) => (
-                    <option key={b._id} value={b._id}>
-                      {b.batchId}
-                    </option>
-                  ))}
+                  <option value="">Select batch for this farmer</option>
+                  {batches
+                    .filter((b) => {
+                      const fid = b.farmer?._id || b.farmer;
+                      return String(fid) === String(payoutForm.farmerId);
+                    })
+                    .filter((b) => b.grading?.status === 'Approved' && b.payoutStatus !== 'PAID')
+                    .map((b) => (
+                      <option key={b._id} value={b._id}>
+                        {b.batchId} — {b.produceType} — ₹{b.amountOwedToFarmer || 0}
+                      </option>
+                    ))}
                 </select>
                 <input
-                  required
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="Amount ₹"
-                  className="border rounded px-3 py-2 text-sm"
-                  value={payoutForm.amount}
-                  onChange={(e) => setPayoutForm({ ...payoutForm, amount: e.target.value })}
+                  readOnly
+                  type="text"
+                  placeholder="Amount (auto from batch)"
+                  className="border rounded px-3 py-2 text-sm bg-slate-50 text-slate-800 font-semibold"
+                  value={payoutForm.amount !== '' && payoutForm.amount != null ? `₹${payoutForm.amount}` : ''}
                 />
                 <input
                   placeholder="Transaction ID"
@@ -1131,8 +1281,12 @@ export default function FpoDashboard() {
                 <input
                   type="file"
                   multiple
+                  accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
                   onChange={(e) => setKycFiles(Array.from(e.target.files || []))}
                 />
+                <p className="text-xs text-slate-500">
+                  Registration certificate, PAN, GST and similar documents. PDF, JPG or PNG, up to 5 MB each (max 5 files per upload).
+                </p>
                 <button
                   type="button"
                   onClick={uploadKyc}
@@ -1142,8 +1296,24 @@ export default function FpoDashboard() {
                   Upload
                 </button>
                 <p className="text-xs text-slate-500">
-                  {fpoProfile.kycDocuments?.length || 0} document(s) on file
+                  {fpoProfile.kycDocuments?.length || 0} document(s) on file. Documents are private and visible only to you and the reviewing authority.
                 </p>
+                {fpoProfile.kycStatus === 'Rejected' && fpoProfile.kycRejectionReason && (
+                  <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2">
+                    KYC rejected: {fpoProfile.kycRejectionReason}
+                  </p>
+                )}
+                {(fpoProfile.kycDocuments || []).length > 0 && (
+                  <ul className="text-sm space-y-1">
+                    {fpoProfile.kycDocuments.map((_, i) => (
+                      <li key={i}>
+                        <button type="button" onClick={() => viewKycDocument(i)} className="text-emerald-700 underline">
+                          View document {i + 1}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
 
               {user?.role === 'fpo_admin' && (
