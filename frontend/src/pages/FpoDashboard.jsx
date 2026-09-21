@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import API from '../api/axios';
 import { useAuth } from '../context/AuthContext';
 import FpoCompletionPanel from '../components/FpoCompletionPanel';
+import FpoOverview from '../components/dashboard/FpoOverview';
 
 const NAV = [
   { id: 'analytics', label: 'Overview' },
@@ -31,7 +32,7 @@ export default function FpoDashboard() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('analytics');
   const [fpoProfile, setFpoProfile] = useState(undefined);
-  const [analytics, setAnalytics] = useState({});
+  const [, setAnalytics] = useState({});
   const [farmers, setFarmers] = useState([]);
   const [batches, setBatches] = useState([]);
   const [inventory, setInventory] = useState([]);
@@ -546,22 +547,18 @@ export default function FpoDashboard() {
 
           {/* OVERVIEW */}
           {activeTab === 'analytics' && (
-            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {[
-                { label: 'Member farmers', value: analytics.totalFarmers ?? farmers.length },
-                { label: 'Intake batches', value: analytics.totalBatches ?? batches.length },
-                { label: 'Stock (kg)', value: analytics.totalStockKg ?? '—' },
-                {
-                  label: 'Payouts distributed (₹)',
-                  value: analytics.totalPayoutsDistributed ?? '—',
-                },
-              ].map((c) => (
-                <div key={c.label} className="bg-white border rounded-lg p-5">
-                  <p className="text-xs uppercase tracking-wide text-slate-500">{c.label}</p>
-                  <p className="text-2xl font-semibold text-slate-900 mt-2">{c.value}</p>
-                </div>
-              ))}
-            </div>
+            <FpoOverview
+              profile={fpoProfile}
+              user={user}
+              farmers={farmers}
+              batches={batches}
+              inventory={inventory}
+              payouts={payouts}
+              listings={listings}
+              orders={fpoOrders}
+              logs={activityLogs}
+              onNavigate={setActiveTab}
+            />
           )}
 
           {/* FARMERS */}

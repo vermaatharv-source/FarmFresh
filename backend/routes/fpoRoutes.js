@@ -7,6 +7,7 @@ router.patch('/farmers/:farmerId', protect, authorizeRoles('fpo_admin', 'fpo_sta
 router.post('/farmers/import', protect, authorizeRoles('fpo_admin'), uploadImport.single('file'), c.importFarmersExcel);
 router.get('/activity-logs', protect, authorizeRoles('fpo_admin'), c.getActivityLogs);
 router.get('/kyc/documents/:index', protect, authorizeRoles('fpo_admin'), kyc.ownDocument);
+router.get('/admin/summary', protect, authorizeRoles('admin'), kyc.adminSummary);
 router.get('/admin/fpos/:fpoId', protect, authorizeRoles('admin'), kyc.adminFpoDetail);
 router.get('/admin/fpos/:fpoId/documents/:index', protect, authorizeRoles('admin'), kyc.adminDocument);
 router.get('/farmers/:farmerId/bank-details', protect, authorizeRoles('fpo_admin'), c.revealBankDetails);

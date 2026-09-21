@@ -3,6 +3,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import API from '../api/axios';
 import { useAuth } from '../context/AuthContext';
+import AuthorityOverview from '../components/dashboard/AuthorityOverview';
 
 /**
  * Government / Authority portal (role: admin).
@@ -33,6 +34,7 @@ export default function AdminDashboard() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [fpos, setFpos] = useState([]);
+  const [summary, setSummary] = useState(null);
   const [statusFilter, setStatusFilter] = useState('');
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
@@ -49,8 +51,7 @@ export default function AdminDashboard() {
   const load = async () => {
     try {
       setLoading(true);
-      const q = statusFilter ? `?status=${statusFilter}` : '';
-      const res = await API.get(`/fpo/admin/fpos${q}`);
+      const res = await API.get('/fpo/admin/fpos');
       setFpos(res.data || []);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to load FPO registry');
@@ -61,8 +62,11 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     load();
+    API.get('/fpo/admin/summary')
+      .then((r) => setSummary(r.data))
+      .catch(() => setSummary(null));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statusFilter]);
+  }, []);
 
   const openReview = async (fpoId) => {
     setDetail(null);
@@ -130,22 +134,16 @@ export default function AdminDashboard() {
     navigate('/login');
   };
 
-  const counts = {
-    total: fpos.length,
-    verified: fpos.filter((f) => f.kycStatus === 'Verified').length,
-    pending: fpos.filter((f) => f.kycStatus === 'Pending').length,
-    rejected: fpos.filter((f) => f.kycStatus === 'Rejected').length,
-  };
-
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return fpos;
-    return fpos.filter((f) =>
-      [f.name, f.registrationNumber, f.contactDetails?.district, f.contactDetails?.state]
+    return fpos.filter((f) => {
+      if (statusFilter && f.kycStatus !== statusFilter) return false;
+      if (!q) return true;
+      return [f.name, f.registrationNumber, f.contactDetails?.district, f.contactDetails?.state]
         .filter(Boolean)
-        .some((v) => String(v).toLowerCase().includes(q))
-    );
-  }, [fpos, search]);
+        .some((v) => String(v).toLowerCase().includes(q));
+    });
+  }, [fpos, search, statusFilter]);
 
   return (
     <div className="min-h-screen bg-slate-100">
@@ -178,19 +176,9 @@ export default function AdminDashboard() {
           <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 px-4 py-3 rounded text-sm">{actionMsg}</div>
         )}
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {[
-            { label: 'Total FPOs', value: counts.total, color: 'bg-white' },
-            { label: 'KYC Verified', value: counts.verified, color: 'bg-emerald-50' },
-            { label: 'Pending review', value: counts.pending, color: 'bg-amber-50' },
-            { label: 'Rejected', value: counts.rejected, color: 'bg-red-50' },
-          ].map((c) => (
-            <div key={c.label} className={`${c.color} border rounded-lg p-4`}>
-              <p className="text-xs text-slate-500 uppercase tracking-wide">{c.label}</p>
-              <p className="text-2xl font-semibold text-slate-900 mt-1">{c.value}</p>
-            </div>
-          ))}
-        </div>
+        <AuthorityOverview fpos={fpos} summary={summary} onReview={openReview} />
+
+        <h2 className="text-base font-semibold text-slate-900 pt-2">All registered FPOs</h2>
 
         <div className="flex flex-wrap gap-3 items-center justify-between">
           <div className="flex gap-2 items-center">

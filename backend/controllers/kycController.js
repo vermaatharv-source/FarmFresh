@@ -3,6 +3,9 @@ const fs = require('fs');
 const Fpo = require('../models/Fpo');
 const Farmer = require('../models/Farmer');
 const ActivityLog = require('../models/ActivityLog');
+const Batch = require('../models/Batch');
+const FpoOrder = require('../models/FpoOrder');
+const Payout = require('../models/Payout');
 const { logActivity } = require('../utils/activityLogger');
 
 // KYC documents are private. They are only ever streamed through these
@@ -114,6 +117,42 @@ exports.adminDocument = async (req, res) => {
       summary: `Authority viewed KYC document ${Number(req.params.index) + 1} of ${fpo.name}`,
     });
     sendDocument(res, stored);
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+};
+
+// GET /api/fpo/admin/summary  (government admin)
+// Platform-wide totals for the authority overview. Only counts and sums are
+// returned. No individual farmer, order or payment record leaves this endpoint.
+exports.adminSummary = async (req, res) => {
+  try {
+    const [genderRows, landRows, batchRows, salesRows, payoutRows, activeCount] = await Promise.all([
+      Farmer.aggregate([{ $group: { _id: '$gender', n: { $sum: 1 } } }]),
+      Farmer.aggregate([{ $group: { _id: null, acres: { $sum: '$landHoldingAcres' } } }]),
+      Batch.aggregate([{ $group: { _id: null, kg: { $sum: '$rawQuantityKg' }, count: { $sum: 1 } } }]),
+      FpoOrder.aggregate([
+        { $match: { status: { $nin: ['Cancelled', 'Rejected', 'Refunded'] } } },
+        { $group: { _id: null, value: { $sum: '$totalPrice' }, orders: { $sum: 1 } } },
+      ]),
+      Payout.aggregate([
+        { $match: { status: 'Completed' } },
+        { $group: { _id: null, paid: { $sum: '$amount' }, count: { $sum: 1 } } },
+      ]),
+      Farmer.countDocuments({ isActive: true }),
+    ]);
+
+    const total = genderRows.reduce((sum, r) => sum + r.n, 0);
+    const women = (genderRows.find((r) => r._id === 'Female') || {}).n || 0;
+    const genderRecorded = genderRows.filter((r) => r._id).reduce((sum, r) => sum + r.n, 0);
+    const first = (rows, key) => (rows[0] && rows[0][key]) || 0;
+
+    res.json({
+      farmers: { total, active: activeCount, women, genderRecorded, landAcres: first(landRows, 'acres') },
+      batches: { count: first(batchRows, 'count'), kg: first(batchRows, 'kg') },
+      sales: { value: first(salesRows, 'value'), orders: first(salesRows, 'orders') },
+      payouts: { paid: first(payoutRows, 'paid'), count: first(payoutRows, 'count') },
+    });
   } catch (e) {
     res.status(500).json({ message: e.message });
   }
