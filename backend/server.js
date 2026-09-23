@@ -2,7 +2,9 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const helmet = require('helmet');
-const { rateLimit } = require('express-rate-limit');
+const { waf } = require('./middleware/waf');
+const { registerRouteIdValidators } = require('./middleware/idValidation');
+const { authLimiter, apiLimiter, writeLimiter } = require('./middleware/rateLimiters');
 const dotenv = require('dotenv');
 const fs = require('fs');
 const path = require('path');
@@ -40,6 +42,7 @@ const privateDir = path.join(__dirname, 'private_uploads');
 if (!fs.existsSync(privateDir)) fs.mkdirSync(privateDir, { recursive: true });
 
 const app = express();
+app.disable('x-powered-by');
 
 // Only enable when running behind a reverse proxy (Render, Nginx, ...), so
 // rate limiting sees the real client IP. e.g. TRUST_PROXY=1
@@ -57,6 +60,7 @@ const reportRoutes = require('./routes/reportRoutes');
 const gradePriceRoutes = require('./routes/gradePriceRoutes');
 const reviewRoutes = require('./routes/reviewRoutes');
 const subscriptionRoutes = require('./routes/subscriptionRoutes');
+const securityRoutes = require('./routes/securityRoutes');
 
 // Import eNAM sync service functions
 const { syncAgmarknetPrices, initPriceSyncScheduler } = require('./services/enamSyncService');
@@ -83,25 +87,14 @@ if (allowedOrigins.length) {
 
 app.use(express.json({ limit: '1mb' }));
 
-// Rate limits: slow down password guessing and general abuse.
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 20,
-  standardHeaders: 'draft-7',
-  legacyHeaders: false,
-  skipSuccessfulRequests: true,
-  message: { message: 'Too many attempts. Please try again in 15 minutes.' },
-});
-const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 1500,
-  standardHeaders: 'draft-7',
-  legacyHeaders: false,
-  message: { message: 'Too many requests. Please slow down.' },
-});
+// WAF runs after JSON parsing so it can inspect both query strings and bodies.
+app.use(waf);
+// Validate ObjectId route parameters after Express matches the route.
+registerRouteIdValidators(app);
+
+// Rate limits: global API protection plus a tighter write-request budget.
 app.use('/api', apiLimiter);
-app.use('/api/auth/login', authLimiter);
-app.use('/api/auth/register', authLimiter);
+app.use('/api', writeLimiter);
 
 // Public files: product / grading images only. Anything else (and any legacy
 // document left in this folder) is refused. KYC documents are served through
@@ -114,6 +107,8 @@ app.use(
 );
 
 // API Route mounts
+app.use('/api/auth/login', authLimiter);
+app.use('/api/auth/register', authLimiter);
 app.use('/api/auth', authRoutes);
 app.use('/api/orders', orderRoutes); // coupon validation + unified cart checkout (FPO listings only)
 app.use('/api/fpo', fpoRoutes);
@@ -124,10 +119,26 @@ app.use('/api/reports', reportRoutes); // sales/farmer-performance/monthly/settl
 app.use('/api/grade-prices', gradePriceRoutes); // per-crop grade-based pricing configs used by batch grading
 app.use('/api/reviews', reviewRoutes); // Product Reviews & Ratings
 app.use('/api/subscriptions', subscriptionRoutes); // Recurring Subscriptions (Subscribe & Save)
+app.use('/api/security', securityRoutes); // Admin-only audit blockchain verification
 
 // Health check endpoint
 app.get('/', (req, res) => {
-  res.send('FarmFresh API is running');
+  res.json({ service: 'FarmFresh API', status: 'ok' });
+});
+
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok', service: 'farmfresh-api' });
+});
+
+// Readiness endpoint for Nginx / cloud load balancers. Liveness (/health)
+// stays 200 while the process is alive; readiness requires MongoDB.
+app.get('/ready', (req, res) => {
+  const ready = mongoose.connection.readyState === 1;
+  res.status(ready ? 200 : 503).json({
+    status: ready ? 'ready' : 'not_ready',
+    database: ready ? 'connected' : 'disconnected',
+    service: 'farmfresh-api',
+  });
 });
 
 // Fallback for undefined 404 routes
@@ -164,4 +175,16 @@ mongoose
   .catch((err) => console.error('MongoDB connection error:', err));
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+const server = app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+const shutdown = async (signal) => {
+  console.log(`[shutdown] ${signal} received`);
+  server.close(async () => {
+    try { await mongoose.connection.close(false); } catch (_) {}
+    process.exit(0);
+  });
+  setTimeout(() => process.exit(1), 10000).unref();
+};
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));

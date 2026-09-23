@@ -791,14 +791,15 @@ exports.getBatchTraceability = async (req, res) => {
   try {
     const { batchId } = req.params;
 
+    // Public passport: never expose phone, email, bank, or internal IDs.
     let batch = await Batch.findOne({ batchId })
-      .populate('farmer', 'name address village')
-      .populate('fpo', 'name contactDetails registrationNumber');
+      .populate('farmer', 'name village address')
+      .populate('fpo', 'name registrationNumber contactDetails.district contactDetails.state');
 
     if (!batch && mongoose.Types.ObjectId.isValid(batchId)) {
       batch = await Batch.findById(batchId)
-        .populate('farmer', 'name address village')
-        .populate('fpo', 'name contactDetails registrationNumber');
+        .populate('farmer', 'name village address')
+        .populate('fpo', 'name registrationNumber contactDetails.district contactDetails.state');
     }
 
     if (!batch) {
@@ -809,14 +810,17 @@ exports.getBatchTraceability = async (req, res) => {
 
     const listings = await Listing.find({
       $or: [{ sourceBatch: batch._id }, { sourceIntakeId: batch._id }],
-    }).select('_id produceType grade pricePerKg availableQuantityKg status createdAt');
+      status: 'Published',
+    }).select('produceType grade pricePerKg availableQuantityKg status createdAt');
 
+    // Public marketplace summary only — no order money amounts or consumer linkage.
     const listingIds = listings.map((l) => l._id);
-    const orders = listingIds.length
-      ? await FpoOrder.find({ listing: { $in: listingIds } })
-          .select('_id quantityKg totalPrice status createdAt')
-          .sort({ createdAt: -1 })
-      : [];
+    const orderCount = listingIds.length
+      ? await FpoOrder.countDocuments({ listing: { $in: listingIds } })
+      : 0;
+
+    const district = batch.fpo?.contactDetails?.district || null;
+    const state = batch.fpo?.contactDetails?.state || null;
 
     res.json({
       title: 'Digital Produce Passport',
@@ -830,7 +834,8 @@ exports.getBatchTraceability = async (req, res) => {
       },
       fpo: {
         name: batch.fpo ? batch.fpo.name : 'N/A',
-        contact: batch.fpo?.contactDetails || {},
+        // Region only — no phone/email on the public passport.
+        region: [district, state].filter(Boolean).join(', ') || null,
         registrationNumber: batch.fpo?.registrationNumber || null,
       },
       intake: {
@@ -839,17 +844,26 @@ exports.getBatchTraceability = async (req, res) => {
         collectionDate: batch.collectionDate || batch.createdAt,
       },
       qualityAndGrading: batch.grading || null,
-      pricing: batch.pricingSnapshot || null,
+      // Pricing snapshot is operational; keep grade-level info only if present.
+      pricing: batch.pricingSnapshot
+        ? {
+            gradeA: batch.pricingSnapshot.gradeA,
+            gradeB: batch.pricingSnapshot.gradeB,
+            gradeC: batch.pricingSnapshot.gradeC,
+          }
+        : null,
+      // Do not expose rupee amounts owed to the farmer on a public endpoint.
       farmerPayout: {
-        amountOwedToFarmer: batch.amountOwedToFarmer || 0,
-        payoutStatus: batch.payoutStatus,
-        paidAt: batch.paidAt || null,
+        payoutStatus: batch.payoutStatus || null,
       },
-      marketplace: { listings, orders },
+      marketplace: {
+        listings,
+        orderCount,
+      },
       qrCodeUrl: batch.qrCodeUrl || null,
     });
   } catch (error) {
-    res.status(500).json({ message: 'Server Error', error: error.message });
+    res.status(500).json({ message: 'Server Error' });
   }
 };
 
@@ -890,13 +904,20 @@ exports.updateStaff = async (req, res) => {
     const f = await Fpo.findOne({ adminUser: req.user._id || req.user.id });
     if (!f || !f.staff.some((x) => x.toString() === req.params.staffId))
       return res.status(404).json({ message: 'Staff member not found.' });
-    const u = await User.findById(req.params.staffId);
+    const u = await User.findById(req.params.staffId).select('-password');
     if (!u) return res.status(404).json({ message: 'User not found.' });
     if (req.body.name !== undefined) u.name = req.body.name;
     if (req.body.location !== undefined) u.location = req.body.location;
     if (req.body.password) u.password = await bcrypt.hash(req.body.password, 10);
     await u.save();
-    res.json(u);
+    res.json({
+      id: u._id,
+      name: u.name,
+      email: u.email,
+      phone: u.phone,
+      role: u.role,
+      location: u.location,
+    });
   } catch (e) {
     res.status(400).json({ message: e.message });
   }

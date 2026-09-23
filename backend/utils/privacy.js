@@ -13,9 +13,16 @@ const maskAadhaar = (v) => {
 // Generate once: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 const getKey = () => {
   const hex = process.env.BANK_ENCRYPTION_KEY || '';
-  if (hex.length === 64) return Buffer.from(hex, 'hex');
-  // Fallback dev key — replace in production
-  return crypto.createHash('sha256').update(process.env.JWT_SECRET || 'farmfresh-dev-key').digest();
+  if (/^[0-9a-fA-F]{64}$/.test(hex)) {
+    return Buffer.from(hex, 'hex');
+  }
+  // Never derive from JWT_SECRET — that couples two independent secrets.
+  // In production the server already refuses to start without a valid key.
+  // Dev-only fallback keeps local demos working; do not rely on it in prod.
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('BANK_ENCRYPTION_KEY must be 64 hex characters in production.');
+  }
+  return crypto.createHash('sha256').update('farmfresh-dev-only-bank-key').digest();
 };
 
 // A value that came back from the API already masked ("XXXXXX1234").
@@ -46,7 +53,9 @@ const decryptBankField = (stored) => {
   const str = String(stored);
   if (!str.startsWith('enc:')) return str; // legacy plain text
   try {
-    const [, ivHex, tagHex, dataHex] = str.split(':');
+    const parts = str.split(':');
+    if (parts.length !== 4) return '********';
+    const [, ivHex, tagHex, dataHex] = parts;
     const decipher = crypto.createDecipheriv('aes-256-gcm', getKey(), Buffer.from(ivHex, 'hex'));
     decipher.setAuthTag(Buffer.from(tagHex, 'hex'));
     const dec = Buffer.concat([decipher.update(Buffer.from(dataHex, 'hex')), decipher.final()]);

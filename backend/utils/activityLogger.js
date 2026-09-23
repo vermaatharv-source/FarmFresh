@@ -1,5 +1,6 @@
 const ActivityLog = require('../models/ActivityLog');
 const User = require('../models/User');
+const { appendAuditBlock } = require('../services/blockchainAuditService');
 
 /**
  * Best-effort audit write — never throws into the business flow.
@@ -24,9 +25,11 @@ async function logActivity({
       actorName = u ? u.name : '';
     }
 
+    const actorId = actor._id || actor.id;
+
     await ActivityLog.create({
       fpo: fpoId || undefined,
-      actor: actor._id || actor.id,
+      actor: actorId,
       actorRole: actor.role || '',
       actorName,
       action,
@@ -35,6 +38,17 @@ async function logActivity({
       summary,
       meta,
       ip: req.headers?.['x-forwarded-for'] || req.ip || '',
+    });
+
+    await appendAuditBlock({
+      actor: actorId,
+      actorRole: actor.role || '',
+      fpo: fpoId,
+      action,
+      entityType,
+      entityId,
+      summary,
+      meta: { ...meta, ip: req.headers?.['x-forwarded-for'] || req.ip || '' },
     });
   } catch (err) {
     console.error('ActivityLog write failed:', err.message);

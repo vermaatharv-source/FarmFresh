@@ -6,11 +6,14 @@ const round2 = (v) => Math.round(v * 100) / 100;
 
 /**
  * Applies one auto-pricing rule: looks up the latest matching mandi price,
- * converts ₹/quintal -> ₹/kg, applies the per-grade discount %, and rotates
- * the FPO's active GradePriceConfig for that crop (old one deactivated, new
- * one created with pricingSource: 'AUTO_MANDI'). Skips silently — returns
- * false — if there's no mandi data yet, or the modal price hasn't changed
- * since the last time this rule was applied (avoids spamming history).
+ * converts ₹/quintal -> ₹/kg, applies the per-grade discount %, and replaces
+ * the FPO's GradePriceConfig for that crop.
+ *
+ * Previous configs for the same (fpo, cropName) are DELETED (not soft-deactivated)
+ * so the UI and DB never accumulate historical price rows.
+ *
+ * Skips silently — returns false — if there's no mandi data yet, or the modal
+ * price hasn't changed since the last apply (avoids needless churn).
  */
 const applyRule = async (rule) => {
   if (!rule.isEnabled) return false;
@@ -28,10 +31,8 @@ const applyRule = async (rule) => {
   const gradeBPricePerKg = round2(basePerKg * (1 - (rule.gradeBDiscountPct || 0) / 100));
   const gradeCPricePerKg = round2(basePerKg * (1 - (rule.gradeCDiscountPct || 0) / 100));
 
-  await GradePriceConfig.updateMany(
-    { fpo: rule.fpo, cropName: rule.cropName, isActive: true },
-    { $set: { isActive: false } }
-  );
+  // Flush all previous price rows for this crop (active + historical).
+  await GradePriceConfig.deleteMany({ fpo: rule.fpo, cropName: rule.cropName });
 
   await GradePriceConfig.create({
     fpo: rule.fpo,
@@ -69,4 +70,13 @@ const applyAutoPricingRules = async () => {
   return { applied, total: rules.length };
 };
 
-module.exports = { applyRule, applyAutoPricingRules };
+/**
+ * One-shot cleanup: remove every inactive (historical) GradePriceConfig
+ * across all FPOs. Safe to run after deploying the no-history policy.
+ */
+const flushHistoricalPrices = async () => {
+  const result = await GradePriceConfig.deleteMany({ isActive: false });
+  return { deleted: result.deletedCount || 0 };
+};
+
+module.exports = { applyRule, applyAutoPricingRules, flushHistoricalPrices };

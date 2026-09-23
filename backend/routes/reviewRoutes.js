@@ -3,6 +3,7 @@ const router = express.Router();
 const Review = require('../models/Review');
 const FpoOrder = require('../models/FpoOrder');
 const { protect } = require('../middleware/authMiddleware');
+const { voteLimiter } = require('../middleware/rateLimiters');
 
 // Submit or update a review
 router.post('/', protect, async (req, res) => {
@@ -132,7 +133,7 @@ router.get('/item/:targetType/:targetId', async (req, res) => {
 });
 
 // Toggle helpful vote on a review
-router.post('/:id/vote', protect, async (req, res) => {
+router.post('/:id/vote', protect, voteLimiter, async (req, res) => {
   try {
     const review = await Review.findById(req.params.id);
     if (!review) {

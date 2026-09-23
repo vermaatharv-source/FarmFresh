@@ -12,17 +12,19 @@ const getFpoIdForUser = async (userId) => {
   return fpo ? fpo._id : null;
 };
 
-// List all grade price configs for this FPO (most recent first)
+// List grade price configs for this FPO.
+// By default only ACTIVE rows are returned — historical rows are no longer kept.
+// Pass ?includeInactive=true only for rare admin debugging.
 exports.list = async (req, res) => {
   try {
     const userId = req.user._id || req.user.id;
     const fpoId = await getFpoIdForUser(userId);
     if (!fpoId) return res.json([]);
 
-    const { cropName, activeOnly } = req.query;
+    const { cropName, includeInactive } = req.query;
     const filter = { fpo: fpoId };
     if (cropName) filter.cropName = cropName;
-    if (activeOnly === 'true') filter.isActive = true;
+    if (includeInactive !== 'true') filter.isActive = true;
 
     const configs = await GradePriceConfig.find(filter).sort({ cropName: 1, effectiveFrom: -1 });
     res.json(configs);
@@ -31,8 +33,8 @@ exports.list = async (req, res) => {
   }
 };
 
-// Create a new grade price config. Any existing active config for the same
-// crop is deactivated so batch grading always resolves a single active price.
+// Create a new grade price config. All previous configs for the same crop
+// (active + historical) are deleted so only the latest prices remain.
 exports.create = async (req, res) => {
   try {
     const userId = req.user._id || req.user.id;
@@ -51,10 +53,8 @@ exports.create = async (req, res) => {
       }
     }
 
-    await GradePriceConfig.updateMany(
-      { fpo: fpoId, cropName: cropName.trim(), isActive: true },
-      { $set: { isActive: false, updatedBy: userId } }
-    );
+    // Flush every previous price row for this crop — no historical leftovers.
+    await GradePriceConfig.deleteMany({ fpo: fpoId, cropName: cropName.trim() });
 
     const config = await GradePriceConfig.create({
       fpo: fpoId,
@@ -104,21 +104,17 @@ exports.update = async (req, res) => {
   }
 };
 
-// Deactivate a config (soft delete — keeps history for batches already priced from it)
+// Permanently remove a grade price config (no historical retention).
 exports.deactivate = async (req, res) => {
   try {
     const userId = req.user._id || req.user.id;
     const fpoId = await getFpoIdForUser(userId);
     if (!fpoId) return res.status(400).json({ message: 'Associated FPO profile not found.' });
 
-    const config = await GradePriceConfig.findOne({ _id: req.params.id, fpo: fpoId });
+    const config = await GradePriceConfig.findOneAndDelete({ _id: req.params.id, fpo: fpoId });
     if (!config) return res.status(404).json({ message: 'Grade price config not found.' });
 
-    config.isActive = false;
-    config.updatedBy = userId;
-    await config.save();
-
-    res.json({ message: 'Grade price config deactivated.', config });
+    res.json({ message: 'Grade price config removed.', config });
   } catch (error) {
     res.status(500).json({ message: 'Server Error', error: error.message });
   }
@@ -299,7 +295,7 @@ exports.toggleAutoRule = async (req, res) => {
 };
 
 // Remove a rule entirely — the crop goes back to being priced manually.
-// The last GradePriceConfig it produced is left in place/history untouched.
+// The last active GradePriceConfig is kept so grading still has a price to use.
 exports.deleteAutoRule = async (req, res) => {
   try {
     const userId = req.user._id || req.user.id;
