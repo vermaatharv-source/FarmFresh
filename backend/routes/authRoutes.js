@@ -149,6 +149,19 @@ router.post('/login', async (req, res) => {
       });
     }
 
+    // FPO admins whose KYC was rejected cannot log in until they correct and re-submit.
+    if (user.role === 'fpo_admin') {
+      const fpo = await Fpo.findOne({ adminUser: user._id }).select('kycStatus kycRejectionReason');
+      if (fpo && fpo.kycStatus === 'Rejected') {
+        return res.status(403).json({
+          message: fpo.kycRejectionReason
+            ? `Your FPO's KYC was rejected: ${fpo.kycRejectionReason}. Please correct the details and re-submit.`
+            : "Your FPO's KYC was rejected. Please correct the details and re-submit.",
+          kycStatus: 'Rejected',
+        });
+      }
+    }
+
     const token = jwt.sign(
       { id: user._id, role: user.role },
       process.env.JWT_SECRET,
