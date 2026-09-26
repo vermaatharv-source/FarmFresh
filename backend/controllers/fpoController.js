@@ -401,32 +401,56 @@ exports.gradeBatch = async (req, res) => {
       gradedAt: new Date(),
     };
 
+    // FIX: re-grading an already-approved batch used to subtract the batch's
+    // old grade allocation straight off Inventory.totalQuantity, clamped to a
+    // floor of 0. That clamp silently hides the real problem: if some of that
+    // stock is already reserved (in a listing) or sold, totalQuantity can end
+    // up LOWER than reservedQuantity + soldQuantity, which is a mathematically
+    // inconsistent inventory row (more stock committed than exists). We now
+    // check for that conflict per grade *before* touching anything, and if
+    // regrading would create it, the whole request is rejected with a clear
+    // message instead of silently corrupting the numbers.
     if (old.status === 'Approved') {
-      for (const [grade, qty] of [
+      const oldAllocations = [
         ['A', old.gradeA_Kg],
         ['B', old.gradeB_Kg],
         ['C', old.gradeC_Kg],
-      ]) {
-        if (qty > 0) {
-          const inv = await Inventory.findOne({
-            fpo: fpoId,
-            produceType: batch.produceType,
-            grade,
-          });
-          if (inv) {
-            inv.totalQuantity = Math.max(0, inv.totalQuantity - qty);
-            await inv.save();
+      ].filter(([, qty]) => qty > 0);
+
+      const invByGrade = {};
+      for (const [grade, qty] of oldAllocations) {
+        const inv = await Inventory.findOne({ fpo: fpoId, produceType: batch.produceType, grade });
+        invByGrade[grade] = inv;
+        if (inv) {
+          const committed = inv.reservedQuantity + inv.soldQuantity;
+          const projectedTotal = inv.totalQuantity - qty;
+          if (projectedTotal < committed) {
+            return res.status(409).json({
+              message:
+                `Cannot re-grade this batch: removing the previous Grade ${grade} allocation ` +
+                `(${qty}kg) would leave total stock (${projectedTotal}kg) below what is already ` +
+                `reserved or sold (${committed}kg) for ${batch.produceType} Grade ${grade}. ` +
+                `Resolve the conflicting reservations/sales first.`,
+            });
           }
-          await StockMovement.create({
-            fpo: fpoId,
-            produceType: batch.produceType,
-            grade,
-            type: 'Adjustment',
-            quantityKg: -qty,
-            batch: batch._id,
-            note: 'Regrading replaced previous approved allocation',
-          });
         }
+      }
+
+      for (const [grade, qty] of oldAllocations) {
+        const inv = invByGrade[grade];
+        if (inv) {
+          inv.totalQuantity = Math.max(0, inv.totalQuantity - qty);
+          await inv.save();
+        }
+        await StockMovement.create({
+          fpo: fpoId,
+          produceType: batch.produceType,
+          grade,
+          type: 'Adjustment',
+          quantityKg: -qty,
+          batch: batch._id,
+          note: 'Regrading replaced previous approved allocation',
+        });
       }
     }
 

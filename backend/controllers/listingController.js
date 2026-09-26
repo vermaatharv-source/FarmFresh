@@ -169,6 +169,13 @@ exports.setListingStatus = async (req, res) => {
   }
 };
 
+// Update listing. FIX: availableQuantityKg used to be changed on the Listing
+// document with no corresponding change to Inventory.reservedQuantity, so the
+// two drifted out of sync (over time this lets total reservations exceed real
+// stock, i.e. overselling). Any change in quantity is now mirrored onto the
+// Inventory row for the same fpo/produceType/grade, guarded so it can never
+// reserve more than is actually free, and logged as a StockMovement so the
+// change is auditable.
 exports.updateListing = async (req, res) => {
   try {
     const f = await getFpoId(req.user._id || req.user.id);
@@ -176,8 +183,50 @@ exports.updateListing = async (req, res) => {
     if (!listing) return res.status(404).json({ message: 'Listing not found.' });
 
     const { pricePerKg, availableQuantityKg, minOrderQtyKg, description } = req.body;
+
+    if (availableQuantityKg !== undefined) {
+      const newQty = Number(availableQuantityKg);
+      if (!(newQty >= 0)) {
+        return res.status(400).json({ message: 'availableQuantityKg must be a non-negative number.' });
+      }
+
+      const oldQty = listing.availableQuantityKg;
+      const delta = newQty - oldQty; // positive = reserving more, negative = releasing some
+
+      if (delta !== 0) {
+        const inv = await Inventory.findOne({ fpo: f, produceType: listing.produceType, grade: listing.grade });
+        if (!inv) {
+          return res.status(400).json({ message: 'No matching inventory record found for this listing.' });
+        }
+
+        if (delta > 0) {
+          const free = inv.totalQuantity - inv.reservedQuantity - inv.soldQuantity;
+          if (free < delta) {
+            return res.status(400).json({ message: `Not enough free stock to increase by ${delta}kg. Available: ${free}kg.` });
+          }
+          inv.reservedQuantity += delta;
+        } else {
+          // Releasing stock back: never let reservedQuantity go negative even
+          // if data was already inconsistent before this fix.
+          inv.reservedQuantity = Math.max(0, inv.reservedQuantity + delta);
+        }
+        await inv.save();
+
+        await StockMovement.create({
+          fpo: f,
+          produceType: listing.produceType,
+          grade: listing.grade,
+          type: delta > 0 ? 'Reserved' : 'Released',
+          quantityKg: delta,
+          listing: listing._id,
+          note: `Listing quantity updated from ${oldQty}kg to ${newQty}kg`,
+        });
+      }
+
+      listing.availableQuantityKg = newQty;
+    }
+
     if (pricePerKg !== undefined) listing.pricePerKg = Number(pricePerKg);
-    if (availableQuantityKg !== undefined) listing.availableQuantityKg = Number(availableQuantityKg);
     if (minOrderQtyKg !== undefined) listing.minOrderQtyKg = Number(minOrderQtyKg);
     if (description !== undefined) listing.description = description;
 
@@ -192,11 +241,37 @@ exports.updateListing = async (req, res) => {
   }
 };
 
+// Delete listing. FIX: used to just delete the document, permanently stranding
+// its reservedQuantity on the Inventory row (stock stuck as "reserved"
+// forever, unavailable for new listings). Now releases the reservation back
+// to Inventory and records a StockMovement before removing the listing.
 exports.deleteListing = async (req, res) => {
   try {
     const f = await getFpoId(req.user._id || req.user.id);
-    const listing = await Listing.findOneAndDelete({ _id: req.params.id, fpo: f });
+    const listing = await Listing.findOne({ _id: req.params.id, fpo: f });
     if (!listing) return res.status(404).json({ message: 'Listing not found.' });
+
+    const releaseQty = listing.availableQuantityKg;
+
+    if (releaseQty > 0) {
+      const inv = await Inventory.findOne({ fpo: f, produceType: listing.produceType, grade: listing.grade });
+      if (inv) {
+        inv.reservedQuantity = Math.max(0, inv.reservedQuantity - releaseQty);
+        await inv.save();
+
+        await StockMovement.create({
+          fpo: f,
+          produceType: listing.produceType,
+          grade: listing.grade,
+          type: 'Released',
+          quantityKg: -releaseQty,
+          listing: listing._id,
+          note: 'Listing deleted — reservation released',
+        });
+      }
+    }
+
+    await Listing.deleteOne({ _id: listing._id });
     res.json({ message: 'Listing deleted' });
   } catch (e) {
     res.status(500).json({ message: e.message });

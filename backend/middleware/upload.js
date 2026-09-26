@@ -2,20 +2,23 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const { UPLOADS_DIR, PRIVATE_DIR } = require('../config/storagePaths');
 
 // Three upload profiles:
-//   uploadImages  - product / grading photos. Stored in uploads/ and publicly
-//                   viewable (they are shown to consumers).
-//   uploadKyc     - KYC documents (PDF / JPG / PNG). Stored in private_uploads/,
+//   uploadImages  - product / grading photos. Stored in UPLOADS_DIR and
+//                   publicly viewable (they are shown to consumers).
+//   uploadKyc     - KYC documents (PDF / JPG / PNG). Stored in PRIVATE_DIR,
 //                   which is NEVER served statically.
-//   uploadImport  - farmer import sheets (.xlsx / .csv). They contain Aadhaar and
-//                   bank data, so they also go to private_uploads/ and are
+//   uploadImport  - farmer import sheets (.xlsx / .csv). They contain Aadhaar
+//                   and bank data, so they also go to PRIVATE_DIR and are
 //                   deleted right after processing.
+//
+// UPLOADS_DIR / PRIVATE_DIR resolve under DATA_DIR (see config/storagePaths.js).
+// On Render, DATA_DIR must point at a mounted persistent disk or these files
+// disappear on every restart/redeploy.
+//
 // File names are random and the extension comes from the checked MIME type, not
 // from whatever the client called the file.
-const PRIVATE_DIR = path.join(__dirname, '..', 'private_uploads');
-fs.mkdirSync(PRIVATE_DIR, { recursive: true });
-
 const MB = 1024 * 1024;
 const rand = () => crypto.randomBytes(16).toString('hex');
 const reject = (message) => {
@@ -35,7 +38,7 @@ const storageFor = (destination, extFromMime) =>
   });
 
 const uploadImages = multer({
-  storage: storageFor('uploads/', IMAGE_TYPES),
+  storage: storageFor(UPLOADS_DIR, IMAGE_TYPES),
   limits: { fileSize: 5 * MB, files: 5 },
   fileFilter: (req, file, cb) =>
     IMAGE_TYPES[file.mimetype] ? cb(null, true) : cb(reject('Only JPG, PNG, WebP or AVIF images are allowed.')),
@@ -85,4 +88,7 @@ module.exports.uploadImages = uploadImages;
 module.exports.uploadKyc = uploadKyc;
 module.exports.uploadImport = uploadImport;
 module.exports.hasSignature = hasSignature;
+module.exports.UPLOADS_DIR = UPLOADS_DIR;
 module.exports.PRIVATE_DIR = PRIVATE_DIR;
+// Kept for any code still importing the old name.
+module.exports.PRIVATE_DIR_LEGACY_ALIAS = PRIVATE_DIR;

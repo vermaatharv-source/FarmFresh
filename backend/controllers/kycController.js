@@ -12,8 +12,8 @@ const { logActivity } = require('../utils/activityLogger');
 // endpoints, after an authorisation check:
 //   - the FPO admin can open its own documents
 //   - the government admin can open any FPO's documents (every view is audited)
-const ROOT = path.join(__dirname, '..');
-const DIRS = [path.join(ROOT, 'private_uploads'), path.join(ROOT, 'uploads')]; // uploads/ = legacy location
+const { UPLOADS_DIR, PRIVATE_DIR } = require('../config/storagePaths');
+const DIRS = [PRIVATE_DIR, UPLOADS_DIR]; // second entry kept for any legacy public-path references
 
 // Only the file name is used, so a stored value can never point outside these folders.
 function resolveDocument(stored) {
