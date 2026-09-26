@@ -65,6 +65,9 @@ const securityRoutes = require('./routes/securityRoutes');
 // Import eNAM sync service functions
 const { syncAgmarknetPrices, initPriceSyncScheduler } = require('./services/enamSyncService');
 
+// Import Subscription Fulfillment Scheduler
+const { initSubscriptionFulfillmentScheduler } = require('./services/subscriptionFulfillmentService');
+
 // Security headers. Product photos are loaded from a different origin (the
 // frontend), so cross-origin resource loading must stay allowed.
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
@@ -171,6 +174,9 @@ mongoose
 
     // 2. Start automated daily eNAM market price sync cron scheduler (runs daily at 1:00 AM)
     initPriceSyncScheduler();
+
+    // 3. Start background subscription fulfillment cron worker (runs daily at 6:00 AM)
+    initSubscriptionFulfillmentScheduler();
   })
   .catch((err) => console.error('MongoDB connection error:', err));
 

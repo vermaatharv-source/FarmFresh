@@ -1,7 +1,8 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const Listing = require('../models/Listing');
 const FpoOrder = require('../models/FpoOrder');
-const Inventory = require('../models/Inventory');
+const { InventoryError, assertListingAvailable, applyOrderStock } = require('../services/inventoryService');
 const { protect } = require('../middleware/authMiddleware');
 const { notifyUser } = require('../utils/notify');
 
@@ -13,9 +14,9 @@ router.post('/validate-coupon', protect, (req, res) => {
   const code = String(couponCode || '').trim().toUpperCase();
 
   const coupons = {
-    'FRESH10': { type: 'PERCENT', value: 10, maxDiscount: 150, minOrder: 100, desc: '10% off up to ₹150' },
-    'WELCOME50': { type: 'FLAT', value: 50, minOrder: 200, desc: 'Flat ₹50 off on orders ₹200+' },
-    'KISANFEST': { type: 'PERCENT', value: 15, maxDiscount: 200, minOrder: 300, desc: '15% off up to ₹200 on fresh harvest' }
+    FRESH10: { type: 'PERCENT', value: 10, maxDiscount: 150, minOrder: 100, desc: '10% off up to ₹150' },
+    WELCOME50: { type: 'FLAT', value: 50, minOrder: 200, desc: 'Flat ₹50 off on orders ₹200+' },
+    KISANFEST: { type: 'PERCENT', value: 15, maxDiscount: 200, minOrder: 300, desc: '15% off up to ₹200 on fresh harvest' },
   };
 
   const coupon = coupons[code];
@@ -38,133 +39,129 @@ router.post('/validate-coupon', protect, (req, res) => {
     valid: true,
     code,
     discount,
-    description: coupon.desc
+    description: coupon.desc,
   });
 });
 
 // Unified multi-item checkout endpoint (FPO listings only)
+//
+// Fix (Issue 2): the validate -> decrement -> update-inventory -> create-order
+// sequence now runs inside a single MongoDB session/transaction
+// (session.withTransaction). If any item in the cart fails at any step —
+// a listing going out of stock, an order failing to save, etc — every
+// change made so far in this checkout (stock already decremented for
+// earlier items in the same cart, orders already created) is rolled back
+// automatically. Previously a failure partway through left already-decremented
+// listings with no order to show for it.
 router.post('/checkout', protect, async (req, res) => {
+  const {
+    items = [],
+    deliveryAddress,
+    deliverySlot = 'Standard Delivery',
+    paymentMethod = 'CARD',
+    couponCode = '',
+  } = req.body;
+
+  if (!items.length) {
+    return res.status(400).json({ message: 'Cart is empty.' });
+  }
+
+  if (!deliveryAddress || !deliveryAddress.fullName || !deliveryAddress.phone || !deliveryAddress.streetAddress) {
+    return res.status(400).json({ message: 'Please select or provide a complete delivery address.' });
+  }
+
+  const session = await mongoose.startSession();
+  let orderSummary;
+
   try {
-    const {
-      items = [],
-      deliveryAddress,
-      deliverySlot = 'Standard Delivery',
-      paymentMethod = 'CARD',
-      couponCode = ''
-    } = req.body;
+    await session.withTransaction(async () => {
+      let subtotal = 0;
+      const validatedItems = [];
 
-    if (!items.length) {
-      return res.status(400).json({ message: 'Cart is empty.' });
-    }
+      // 1. Validation pass — read inside the transaction so the checks are
+      // against a consistent snapshot.
+      for (const item of items) {
+        const qty = Number(item.quantity);
+        if (!qty || qty <= 0) {
+          const err = new Error(`Invalid quantity for ${item.name || 'item'}.`);
+          err.statusCode = 400;
+          throw err;
+        }
 
-    if (!deliveryAddress || !deliveryAddress.fullName || !deliveryAddress.phone || !deliveryAddress.streetAddress) {
-      return res.status(400).json({ message: 'Please select or provide a complete delivery address.' });
-    }
+        // Only FPO listings are sold. Stale carts may still hold old farmer-direct items.
+        if (item.type !== 'FPO') {
+          const err = new Error(`${item.name || 'An item'} is no longer available. Please remove it from your cart.`);
+          err.statusCode = 400;
+          throw err;
+        }
 
-    let subtotal = 0;
-    const validatedItems = [];
+        const listing = await Listing.findOne({ _id: item.id, status: 'Published' }).session(session);
+        assertListingAvailable(listing, qty);
 
-    // 1. Validation pass
-    for (const item of items) {
-      const qty = Number(item.quantity);
-      if (!qty || qty <= 0) {
-        return res.status(400).json({ message: `Invalid quantity for ${item.name || 'item'}.` });
+        const itemTotal = listing.pricePerKg * qty;
+        subtotal += itemTotal;
+        validatedItems.push({ listing, qty, itemTotal, buyerType: item.buyerType || 'INDIVIDUAL' });
       }
 
-      // Only FPO listings are sold. Stale carts may still hold old farmer-direct items.
-      if (item.type !== 'FPO') {
-        return res.status(400).json({
-          message: `${item.name || 'An item'} is no longer available. Please remove it from your cart.`
+      // 2. Coupon calculation
+      let totalDiscount = 0;
+      const code = String(couponCode || '').trim().toUpperCase();
+      if (code === 'FRESH10' && subtotal >= 100) {
+        totalDiscount = Math.min(150, Math.round(subtotal * 0.1));
+      } else if (code === 'WELCOME50' && subtotal >= 200) {
+        totalDiscount = Math.min(subtotal, 50);
+      } else if (code === 'KISANFEST' && subtotal >= 300) {
+        totalDiscount = Math.min(200, Math.round(subtotal * 0.15));
+      }
+
+      const createdOrders = [];
+      const discountRatio = subtotal > 0 ? totalDiscount / subtotal : 0;
+
+      // 3. Execution pass — every write in this loop is part of the same
+      // transaction, via the unified inventory service.
+      for (const v of validatedItems) {
+        const itemDiscount = Math.round(v.itemTotal * discountRatio);
+        const finalPrice = Math.max(0, v.itemTotal - itemDiscount);
+
+        const created = await FpoOrder.create(
+          [
+            {
+              fpo: v.listing.fpo,
+              listing: v.listing._id,
+              consumer: req.user._id || req.user.id,
+              quantityKg: v.qty,
+              totalPrice: finalPrice,
+              buyerType: v.buyerType,
+              gradeOrdered: v.listing.grade,
+              status: 'Placed',
+              deliveryAddress,
+              deliverySlot,
+              paymentMethod,
+              discountAmount: itemDiscount,
+              couponCode: code,
+            },
+          ],
+          { session }
+        );
+        const fOrder = created[0];
+
+        const updatedListing = await applyOrderStock({
+          listing: v.listing,
+          qty: v.qty,
+          orderId: fOrder._id,
+          session,
+        });
+
+        createdOrders.push({
+          orderType: 'FPO',
+          id: fOrder._id,
+          name: updatedListing.produceType,
+          quantity: v.qty,
+          total: finalPrice,
         });
       }
 
-      const listing = await Listing.findOne({ _id: item.id, status: 'Published' });
-      if (!listing) {
-        return res.status(400).json({ message: `Listing ${item.name || ''} is no longer available.` });
-      }
-      if (qty < listing.minOrderQtyKg) {
-        return res.status(400).json({ message: `Minimum order for ${listing.produceType} is ${listing.minOrderQtyKg}kg.` });
-      }
-      if (listing.availableQuantityKg < qty) {
-        return res.status(400).json({ message: `Not enough stock for ${listing.produceType}. Only ${listing.availableQuantityKg}kg available.` });
-      }
-      const itemTotal = listing.pricePerKg * qty;
-      subtotal += itemTotal;
-      validatedItems.push({ listing, qty, itemTotal, buyerType: item.buyerType || 'INDIVIDUAL' });
-    }
-
-    // 2. Coupon calculation
-    let totalDiscount = 0;
-    const code = String(couponCode || '').trim().toUpperCase();
-    if (code === 'FRESH10' && subtotal >= 100) {
-      totalDiscount = Math.min(150, Math.round(subtotal * 0.1));
-    } else if (code === 'WELCOME50' && subtotal >= 200) {
-      totalDiscount = Math.min(subtotal, 50);
-    } else if (code === 'KISANFEST' && subtotal >= 300) {
-      totalDiscount = Math.min(200, Math.round(subtotal * 0.15));
-    }
-
-    const createdOrders = [];
-    const discountRatio = subtotal > 0 ? (totalDiscount / subtotal) : 0;
-
-    // 3. Execution pass
-    for (const v of validatedItems) {
-      const itemDiscount = Math.round(v.itemTotal * discountRatio);
-      const finalPrice = Math.max(0, v.itemTotal - itemDiscount);
-
-      // Atomic operation: the stock check and the decrement happen as one DB
-      // operation, so two concurrent checkouts can never oversell a listing.
-      const updatedListing = await Listing.findOneAndUpdate(
-        { _id: v.listing._id, status: 'Published', availableQuantityKg: { $gte: v.qty } },
-        { $inc: { availableQuantityKg: -v.qty } },
-        { new: true }
-      );
-
-      if (!updatedListing) {
-        return res.status(400).json({ message: `Failed to secure stock for ${v.listing.produceType}.` });
-      }
-
-      const inv = await Inventory.findOne({
-        fpo: updatedListing.fpo,
-        produceType: updatedListing.produceType,
-        grade: updatedListing.grade,
-      });
-      if (inv) {
-        inv.reservedQuantity = Math.max(0, inv.reservedQuantity - v.qty);
-        inv.soldQuantity += v.qty;
-        await inv.save();
-      }
-
-      const fOrder = await FpoOrder.create({
-        fpo: updatedListing.fpo,
-        listing: updatedListing._id,
-        consumer: req.user._id || req.user.id,
-        quantityKg: v.qty,
-        totalPrice: finalPrice,
-        buyerType: v.buyerType,
-        gradeOrdered: updatedListing.grade,
-        status: 'Placed',
-        deliveryAddress,
-        deliverySlot,
-        paymentMethod,
-        discountAmount: itemDiscount,
-        couponCode: code
-      });
-      createdOrders.push({ orderType: 'FPO', id: fOrder._id, name: updatedListing.produceType, quantity: v.qty, total: finalPrice });
-    }
-
-    if (createdOrders.length > 0) {
-      await notifyUser(
-        req.user._id || req.user.id,
-        'OrderAccepted',
-        `Checkout complete! ${createdOrders.length} item(s) ordered and routed for packing.`,
-        { orderId: createdOrders[0].id }
-      ).catch(() => {});
-    }
-
-    res.status(201).json({
-      message: 'Checkout completed successfully!',
-      orderSummary: {
+      orderSummary = {
         itemCount: validatedItems.length,
         subtotal,
         discount: totalDiscount,
@@ -173,12 +170,29 @@ router.post('/checkout', protect, async (req, res) => {
         deliveryAddress,
         paymentMethod,
         orders: createdOrders,
-        placedAt: new Date()
-      }
+        placedAt: new Date(),
+      };
     });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    const status = err instanceof InventoryError || err.statusCode ? err.statusCode || 400 : 500;
+    return res.status(status).json({ message: err.message });
+  } finally {
+    await session.endSession();
   }
+
+  if (orderSummary.orders.length > 0) {
+    await notifyUser(
+      req.user._id || req.user.id,
+      'OrderAccepted',
+      `Checkout complete! ${orderSummary.orders.length} item(s) ordered and routed for packing.`,
+      { orderId: orderSummary.orders[0].id }
+    ).catch(() => {});
+  }
+
+  res.status(201).json({
+    message: 'Checkout completed successfully!',
+    orderSummary,
+  });
 });
 
 module.exports = router;

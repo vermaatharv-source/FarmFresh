@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Subscription = require('../models/Subscription');
 const Listing = require('../models/Listing');
+const { assertListingAvailable } = require('../services/inventoryService');
 const { protect } = require('../middleware/authMiddleware');
 const { notifyUser } = require('../utils/notify');
 
@@ -40,6 +41,18 @@ const advanceDateByFrequency = (date, frequency) => {
 };
 
 // Create a new subscription
+//
+// Fix (Issue 4): subscription creation used to only check that the listing
+// existed (Listing.findById with no status filter, no quantity check), so
+// a subscription could be created against an unpublished listing or one
+// with less stock than the subscription quantity. It now runs the exact
+// same assertListingAvailable() check used by checkout/direct order, so
+// the two paths can never disagree about what counts as "available".
+//
+// Note: this only validates stock AT CREATION TIME. Because a subscription
+// doesn't reserve stock for future deliveries (see subscriptionFulfillmentService.js
+// for why), a listing can still run out before the next delivery date —
+// that case is handled gracefully by the fulfillment job, not here.
 router.post('/', protect, async (req, res) => {
   try {
     const {
@@ -63,20 +76,20 @@ router.post('/', protect, async (req, res) => {
       return res.status(400).json({ message: 'A complete delivery address is required for subscriptions.' });
     }
 
-    let produceName = 'Farm Fresh Produce';
-    let unitPrice = 0;
-    let grade = 'A';
     if (itemType !== 'FPO') {
       return res.status(400).json({ message: 'Only FPO listings can be subscribed to.' });
     }
 
     const targetListing = await Listing.findById(listingId);
-    if (!targetListing) {
-      return res.status(404).json({ message: 'FPO listing not found or unavailable.' });
+    try {
+      assertListingAvailable(targetListing, qty);
+    } catch (e) {
+      return res.status(e.statusCode || 400).json({ message: e.message });
     }
-    produceName = targetListing.produceType;
-    unitPrice = targetListing.pricePerKg;
-    grade = targetListing.grade || 'A';
+
+    const produceName = targetListing.produceType;
+    const unitPrice = targetListing.pricePerKg;
+    const grade = targetListing.grade || 'A';
 
     const basePrice = Math.round(unitPrice * qty);
     const discountPercent = 5; // 5% Subscribe & Save discount
