@@ -18,6 +18,7 @@ const GradePriceConfig = require('../models/GradePriceConfig');
 const FpoOrder = require('../models/FpoOrder');
 const Listing = require('../models/Listing');
 const farmerHandlers = require('./farmerHandlers');
+const { toEnglish, sourceLangFromReq } = require('../utils/canonicalText');
 
 // Helper function to resolve FPO ID for logged-in user
 const getFpoIdForUser = async (userId) => {
@@ -309,6 +310,11 @@ exports.createBatchIntake = async (req, res) => {
       return res.status(404).json({ message: 'Farmer not found for this FPO.' });
     }
 
+    // Canonical-English: store produce type in English regardless of UI language.
+    const sourceLang = sourceLangFromReq(req);
+    const produceTypeEn = String(await toEnglish(String(produceType || '').trim(), sourceLang)).trim();
+    console.log(`[intake] produceType "${produceType}" → "${produceTypeEn}" (source=${sourceLang})`);
+
     const generatedBatchId = `BATCH-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
     const frontendBase = process.env.FRONTEND_URL || 'http://localhost:5173';
     const qrData = await QRCode.toDataURL(
@@ -319,7 +325,7 @@ exports.createBatchIntake = async (req, res) => {
       batchId: generatedBatchId,
       fpo: fpoId,
       farmer: farmerId,
-      produceType,
+      produceType: produceTypeEn,
       rawQuantityKg,
       harvestDate,
       qrCodeUrl: qrData,
@@ -328,7 +334,7 @@ exports.createBatchIntake = async (req, res) => {
     await notify(
       fpoId,
       'NewIntake',
-      `New intake recorded: ${rawQuantityKg}kg of ${produceType} from ${farmer.name}.`,
+      `New intake recorded: ${rawQuantityKg}kg of ${produceTypeEn} from ${farmer.name}.`,
       { batchId: batch._id }
     );
     await notify(fpoId, 'GradingPending', `Batch ${generatedBatchId} is awaiting grading.`, {
@@ -686,7 +692,7 @@ exports.createPayout = async (req, res) => {
       transactionId,
       paymentMethod = 'BANK_TRANSFER',
       fundedFrom = 'FPO_CASH',
-    } = req.body;
+      } = req.body;
     if (!farmerId && !batchId)
       return res
         .status(400)

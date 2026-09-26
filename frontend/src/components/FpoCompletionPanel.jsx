@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import API from '../api/axios';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../context/LanguageContext';
 import MandiPriceBoard from './Mandipriceboard';
 
 const blankProfile = {
@@ -17,7 +18,9 @@ const kycStyles = {
 };
 
 export default function FpoCompletionPanel({ profile, farmers = [], batches = [], onRefresh }) {
-  const { user } = useAuth(); const isAdmin = user?.role === 'fpo_admin';
+  const { user } = useAuth();
+  const { language } = useLanguage();
+  const isAdmin = user?.role === 'fpo_admin';
   const [prices,setPrices]=useState([]); const [weekly,setWeekly]=useState([]); const [staff,setStaff]=useState([]);
   const [price,setPrice]=useState({cropName:'',gradeAPricePerKg:'',gradeBPricePerKg:'',gradeCPricePerKg:'',referenceMarketPrice:''});
   const [mandiPrices,setMandiPrices]=useState([]); const [mandiLoading,setMandiLoading]=useState(false); const [mandiSyncing,setMandiSyncing]=useState(false);
@@ -46,7 +49,7 @@ export default function FpoCompletionPanel({ profile, farmers = [], batches = []
   const saveProfile=async e=>{e.preventDefault();try{const pf=profileForm;const r=await API.patch('/fpo/profile',{name:pf.name,registrationType:pf.registrationType,registrationNumber:pf.registrationNumber,dateOfIncorporation:pf.dateOfIncorporation,pan:pf.pan,gstin:pf.gstin,fssaiLicense:pf.fssaiLicense,udyamNumber:pf.udyamNumber,cbboName:pf.cbboName,schemeName:pf.schemeName,shareholderFarmerCount:pf.shareholderFarmerCount===''?'':Number(pf.shareholderFarmerCount),managerName:pf.managerName,managerContact:pf.managerContact,creditLineAvailable:Number(pf.creditLineAvailable)||0,contactDetails:{phone:pf.phone,email:pf.email,address:pf.address,district:pf.district,state:pf.state,pincode:pf.pincode}});setMessage('FPO profile updated.');onRefresh?.(r.data); }catch(e){setMessage(e.response?.data?.message||'Profile update failed.')}};
   const setPf=(k,v)=>setProfileForm(p=>({...p,[k]:v}));
   const field=(label,k,extra={})=><label key={k} className="block text-xs font-medium text-gray-600">{label}<input value={profileForm[k]} onChange={e=>setPf(k,e.target.value)} className="mt-1 w-full p-2.5 border rounded-lg text-sm text-gray-900 font-normal" {...extra}/></label>;
-  const savePrice=async e=>{e.preventDefault();try{if(autoEnabled){const r=await API.post('/grade-prices/auto-rules',{cropName:price.cropName,gradeADiscountPct:gradeDiscounts.A,gradeBDiscountPct:gradeDiscounts.B,gradeCDiscountPct:gradeDiscounts.C,isEnabled:true});setMessage(r.data.message||'Auto-pricing enabled.');}else{await API.post('/grade-prices',{...price,gradeAPricePerKg:Number(price.gradeAPricePerKg),gradeBPricePerKg:Number(price.gradeBPricePerKg),gradeCPricePerKg:Number(price.gradeCPricePerKg),referenceMarketPrice:Number(price.referenceMarketPrice)||0});setMessage('Grade pricing saved.');}setPrice({cropName:'',gradeAPricePerKg:'',gradeBPricePerKg:'',gradeCPricePerKg:'',referenceMarketPrice:''});setMandiHint(null);setRefMarketTouched(false);setGradesTouched(false);setAutoEnabled(false);load();loadAutoRules();}catch(e){setMessage(e.response?.data?.message||'Could not save pricing.')}};
+  const savePrice=async e=>{e.preventDefault();try{if(autoEnabled){const r=await API.post('/grade-prices/auto-rules',{cropName:price.cropName,gradeADiscountPct:gradeDiscounts.A,gradeBDiscountPct:gradeDiscounts.B,gradeCDiscountPct:gradeDiscounts.C,isEnabled:true,sourceLanguage:language});setMessage(r.data.message||'Auto-pricing enabled.');}else{await API.post('/grade-prices',{...price,gradeAPricePerKg:Number(price.gradeAPricePerKg),gradeBPricePerKg:Number(price.gradeBPricePerKg),gradeCPricePerKg:Number(price.gradeCPricePerKg),referenceMarketPrice:Number(price.referenceMarketPrice)||0,sourceLanguage:language});setMessage('Grade pricing saved.');}setPrice({cropName:'',gradeAPricePerKg:'',gradeBPricePerKg:'',gradeCPricePerKg:'',referenceMarketPrice:''});setMandiHint(null);setRefMarketTouched(false);setGradesTouched(false);setAutoEnabled(false);load();loadAutoRules();}catch(e){setMessage(e.response?.data?.message||'Could not save pricing.')}};
   const importExcel=async e=>{e.preventDefault();if(!excel)return;try{const f=new FormData();f.append('file',excel);const r=await API.post('/fpo/farmers/import-excel',f,{headers:{'Content-Type':'multipart/form-data'}});setMessage(r.data.message);setExcel(null);onRefresh?.();}catch(e){setMessage(e.response?.data?.message||'Excel import failed.')}};
   const addStaff=async e=>{e.preventDefault();try{await API.post('/fpo/staff',staffForm);setStaffForm({name:'',email:'',password:'',location:''});setMessage('Staff member added.');load();}catch(e){setMessage(e.response?.data?.message||'Staff creation failed.')}};
   const removeStaff=async id=>{if(!confirm('Deactivate this staff member?'))return;try{await API.delete(`/fpo/staff/${id}`);setMessage('Staff member deactivated.');load();}catch(e){setMessage(e.response?.data?.message||'Could not remove staff.')}};

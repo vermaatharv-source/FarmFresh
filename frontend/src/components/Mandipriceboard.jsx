@@ -1,18 +1,70 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useLanguage } from '../context/LanguageContext';
+import API from '../api/axios';
 
-// Presentational — the parent (FpoCompletionPanel) owns the data fetch so the
-// same `prices` list can also be used to auto-fill the grade pricing form and
-// to badge Active/Historical Prices against the live market rate.
+/**
+ * Search is language-aware (canonical-English strategy):
+ *   - Stored commodity/state names are always English (from Agmarknet).
+ *   - When UI language is not English, translate the query → English, then filter.
+ */
 export default function MandiPriceBoard({ prices = [], loading, syncing, onSync, isAdmin }) {
+  const { language } = useLanguage();
   const [search, setSearch] = useState('');
+  const [englishQuery, setEnglishQuery] = useState('');
+  const [resolving, setResolving] = useState(false);
+  const debounceRef = useRef(null);
+  const requestIdRef = useRef(0);
+
+  useEffect(() => {
+    const q = search.trim();
+    if (!q) {
+      setEnglishQuery('');
+      setResolving(false);
+      return;
+    }
+
+    if (language === 'en') {
+      setEnglishQuery(q.toLowerCase());
+      setResolving(false);
+      return;
+    }
+
+    clearTimeout(debounceRef.current);
+    const myId = ++requestIdRef.current;
+    setResolving(true);
+
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const { data } = await API.post('/translate', {
+          texts: [q],
+          sourceLanguage: language,
+          targetLanguage: 'en',
+        });
+        if (requestIdRef.current !== myId) return;
+        const en = (data.translations?.[0] || q).trim().toLowerCase();
+        setEnglishQuery(en);
+      } catch (err) {
+        console.error('[mandi search] translate failed:', err.message);
+        if (requestIdRef.current === myId) {
+          setEnglishQuery(q.toLowerCase());
+        }
+      } finally {
+        if (requestIdRef.current === myId) setResolving(false);
+      }
+    }, 400);
+
+    return () => clearTimeout(debounceRef.current);
+  }, [search, language]);
 
   const filtered = useMemo(() => {
-    if (!search.trim()) return prices;
-    const q = search.trim().toLowerCase();
+    if (!englishQuery) return prices;
     return prices.filter(
-      (p) => p.commodityName?.toLowerCase().includes(q) || p.state?.toLowerCase().includes(q)
+      (p) =>
+        p.commodityName?.toLowerCase().includes(englishQuery) ||
+        p.state?.toLowerCase().includes(englishQuery) ||
+        p.market?.toLowerCase().includes(englishQuery)
     );
-  }, [prices, search]);
+  }, [prices, englishQuery]);
 
   const lastSynced = useMemo(() => {
     if (!prices.length) return null;
@@ -49,9 +101,20 @@ export default function MandiPriceBoard({ prices = [], loading, syncing, onSync,
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         className="w-full p-2 border rounded-lg text-sm my-3"
+        data-no-translate
       />
       <p className="text-[11px] text-gray-400 -mt-1 mb-2">
-        Min/Modal/Max are official Agmarknet rates per quintal (100kg); the ≈ ₹/kg column is the converted figure to compare against your grade pricing.
+        Min/Modal/Max are official Agmarknet rates per quintal (100kg); the ≈ ₹/kg column is the
+        converted figure to compare against your grade pricing.
+        {language !== 'en' && search.trim() && (
+          <span className="block mt-0.5 text-slate-500">
+            {resolving
+              ? 'Translating search…'
+              : englishQuery
+                ? `Searching as: “${englishQuery}”`
+                : null}
+          </span>
+        )}
       </p>
 
       {loading && <p className="text-sm text-gray-400">Loading mandi prices…</p>}

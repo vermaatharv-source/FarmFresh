@@ -16,6 +16,7 @@ const fs = require('fs');
 const path = require('path');
 const csvParser = require('csv-parser');
 const { hasSignature } = require('../middleware/upload');
+const { toEnglish, sourceLangFromReq } = require('../utils/canonicalText');
 
 const getFpoIdForUser = async (userId) => {
   if (!userId) return null;
@@ -76,6 +77,16 @@ exports.addFarmer = async (req, res) => {
       return res.status(400).json({ message: 'Name and phone are required.' });
     }
 
+    // Canonical-English for crop names only — never translate person names.
+    const sourceLang = sourceLangFromReq(req);
+    const cropsList = parseCrops(cropsGrown);
+    const cropsEn = cropsList.length
+      ? await toEnglish(cropsList, sourceLang)
+      : cropsList;
+    if (cropsList.length) {
+      console.log(`[farmer] cropsGrown ${JSON.stringify(cropsList)} → ${JSON.stringify(cropsEn)} (source=${sourceLang})`);
+    }
+
     const farmer = await Farmer.create({
       fpo: fpoId,
       name,
@@ -87,7 +98,7 @@ exports.addFarmer = async (req, res) => {
       district,
       state,
       landHoldingAcres: Number(landHoldingAcres) || 0,
-      cropsGrown: parseCrops(cropsGrown),
+      cropsGrown: Array.isArray(cropsEn) ? cropsEn : parseCrops(cropsGrown),
       gender: gender || '',
       category: category || '',
       memberId: memberId || '',
@@ -165,7 +176,14 @@ exports.updateFarmer = async (req, res) => {
     fields.forEach((k) => {
       if (req.body[k] !== undefined) farmer[k] = req.body[k];
     });
-    if (req.body.cropsGrown !== undefined) farmer.cropsGrown = parseCrops(req.body.cropsGrown);
+    if (req.body.cropsGrown !== undefined) {
+      // Canonical-English for crop names on update as well.
+      const sourceLang = sourceLangFromReq(req);
+      const cropsList = parseCrops(req.body.cropsGrown);
+      farmer.cropsGrown = cropsList.length
+        ? await toEnglish(cropsList, sourceLang)
+        : cropsList;
+    }
     if (req.body.bankDetails && req.user.role === 'fpo_admin') {
       const incoming = req.body.bankDetails;
       if (incoming.ifscCode !== undefined) farmer.set('bankDetails.ifscCode', incoming.ifscCode);

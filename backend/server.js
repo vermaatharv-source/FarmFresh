@@ -33,9 +33,6 @@ if (!/^[0-9a-f]{64}$/i.test(process.env.BANK_ENCRYPTION_KEY || '')) {
   console.warn(`[security] ${msg}`);
 }
 
-// multer's diskStorage writes here (see middleware/upload.js). Product and
-// grading photos live in uploads/ (public). KYC documents and import sheets
-// live in private_uploads/ and are never served statically.
 const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 const privateDir = path.join(__dirname, 'private_uploads');
@@ -44,8 +41,6 @@ if (!fs.existsSync(privateDir)) fs.mkdirSync(privateDir, { recursive: true });
 const app = express();
 app.disable('x-powered-by');
 
-// Only enable when running behind a reverse proxy (Render, Nginx, ...), so
-// rate limiting sees the real client IP. e.g. TRUST_PROXY=1
 if (process.env.TRUST_PROXY) {
   app.set('trust proxy', Number(process.env.TRUST_PROXY) || process.env.TRUST_PROXY === 'true');
 }
@@ -61,18 +56,13 @@ const gradePriceRoutes = require('./routes/gradePriceRoutes');
 const reviewRoutes = require('./routes/reviewRoutes');
 const subscriptionRoutes = require('./routes/subscriptionRoutes');
 const securityRoutes = require('./routes/securityRoutes');
+const translateRoutes = require('./routes/translateRoutes');
 
-// Import eNAM sync service functions
 const { syncAgmarknetPrices, initPriceSyncScheduler } = require('./services/enamSyncService');
-
-// Import Subscription Fulfillment Scheduler
 const { initSubscriptionFulfillmentScheduler } = require('./services/subscriptionFulfillmentService');
 
-// Security headers. Product photos are loaded from a different origin (the
-// frontend), so cross-origin resource loading must stay allowed.
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 
-// CORS: set CORS_ORIGIN=https://your-frontend.example (comma separated for several).
 const allowedOrigins = (process.env.CORS_ORIGIN || '').split(',').map((s) => s.trim()).filter(Boolean);
 if (allowedOrigins.length) {
   app.use(
@@ -90,18 +80,12 @@ if (allowedOrigins.length) {
 
 app.use(express.json({ limit: '1mb' }));
 
-// WAF runs after JSON parsing so it can inspect both query strings and bodies.
 app.use(waf);
-// Validate ObjectId route parameters after Express matches the route.
 registerRouteIdValidators(app);
 
-// Rate limits: global API protection plus a tighter write-request budget.
 app.use('/api', apiLimiter);
 app.use('/api', writeLimiter);
 
-// Public files: product / grading images only. Anything else (and any legacy
-// document left in this folder) is refused. KYC documents are served through
-// authenticated endpoints, see controllers/kycController.js.
 const IMAGE_FILE = /\.(jpe?g|png|webp|avif|gif)$/i;
 app.use(
   '/uploads',
@@ -113,18 +97,18 @@ app.use(
 app.use('/api/auth/login', authLimiter);
 app.use('/api/auth/register', authLimiter);
 app.use('/api/auth', authRoutes);
-app.use('/api/orders', orderRoutes); // coupon validation + unified cart checkout (FPO listings only)
+app.use('/api/orders', orderRoutes);
 app.use('/api/fpo', fpoRoutes);
-app.use('/api/listings', listingRoutes); // FPO product listings, sourced from Inventory
-app.use('/api/fpo-orders', fpoOrderRoutes); // consumer orders against FPO listings
+app.use('/api/listings', listingRoutes);
+app.use('/api/fpo-orders', fpoOrderRoutes);
 app.use('/api/notifications', notificationRoutes);
-app.use('/api/reports', reportRoutes); // sales/farmer-performance/monthly/settlement/payout CSV (FPO-managed farmers)
-app.use('/api/grade-prices', gradePriceRoutes); // per-crop grade-based pricing configs used by batch grading
-app.use('/api/reviews', reviewRoutes); // Product Reviews & Ratings
-app.use('/api/subscriptions', subscriptionRoutes); // Recurring Subscriptions (Subscribe & Save)
-app.use('/api/security', securityRoutes); // Admin-only audit blockchain verification
+app.use('/api/reports', reportRoutes);
+app.use('/api/grade-prices', gradePriceRoutes);
+app.use('/api/reviews', reviewRoutes);
+app.use('/api/subscriptions', subscriptionRoutes);
+app.use('/api/security', securityRoutes);
+app.use('/api/translate', translateRoutes); // Bhashini multilingual translation (auth required)
 
-// Health check endpoint
 app.get('/', (req, res) => {
   res.json({ service: 'FarmFresh API', status: 'ok' });
 });
@@ -133,8 +117,6 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', service: 'farmfresh-api' });
 });
 
-// Readiness endpoint for Nginx / cloud load balancers. Liveness (/health)
-// stays 200 while the process is alive; readiness requires MongoDB.
 app.get('/ready', (req, res) => {
   const ready = mongoose.connection.readyState === 1;
   res.status(ready ? 200 : 503).json({
@@ -144,13 +126,10 @@ app.get('/ready', (req, res) => {
   });
 });
 
-// Fallback for undefined 404 routes
 app.use((req, res) => {
   res.status(404).json({ message: `Route ${req.originalUrl} not found` });
 });
 
-// Global error handler: turns any thrown / forwarded error into a JSON message.
-// In production, server-side (5xx) details are hidden from the client.
 app.use((err, req, res, next) => {
   if (err instanceof multer.MulterError) {
     const message =
@@ -168,14 +147,8 @@ mongoose
   .connect(process.env.MONGO_URI)
   .then(() => {
     console.log('MongoDB connected successfully');
-
-    // 1. Automatically run eNAM market price sync immediately on startup
     syncAgmarknetPrices().catch((err) => console.error('Startup eNAM sync error:', err.message));
-
-    // 2. Start automated daily eNAM market price sync cron scheduler (runs daily at 1:00 AM)
     initPriceSyncScheduler();
-
-    // 3. Start background subscription fulfillment cron worker (runs daily at 6:00 AM)
     initSubscriptionFulfillmentScheduler();
   })
   .catch((err) => console.error('MongoDB connection error:', err));

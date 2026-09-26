@@ -1,3 +1,4 @@
+const { toEnglish, sourceLangFromReq } = require('../utils/canonicalText');
 const GradePriceConfig = require('../models/GradePriceConfig');
 const Fpo = require('../models/Fpo');
 const MandiPrice = require('../models/MandiPrice');
@@ -53,12 +54,17 @@ exports.create = async (req, res) => {
       }
     }
 
+    // Canonical-English: store crop name in English regardless of UI language.
+    const sourceLang = sourceLangFromReq(req);
+    const cropNameEn = String(await toEnglish(String(cropName).trim(), sourceLang)).trim();
+    console.log(`[gradePrice] cropName "${cropName}" → "${cropNameEn}" (source=${sourceLang})`);
+
     // Flush every previous price row for this crop — no historical leftovers.
-    await GradePriceConfig.deleteMany({ fpo: fpoId, cropName: cropName.trim() });
+    await GradePriceConfig.deleteMany({ fpo: fpoId, cropName: cropNameEn });
 
     const config = await GradePriceConfig.create({
       fpo: fpoId,
-      cropName: cropName.trim(),
+      cropName: cropNameEn,
       gradeAPricePerKg: Number(gradeAPricePerKg),
       gradeBPricePerKg: Number(gradeBPricePerKg),
       gradeCPricePerKg: Number(gradeCPricePerKg),
@@ -125,10 +131,22 @@ exports.deactivate = async (req, res) => {
 // mandis for the same crop are shown separately instead of being collapsed.
 exports.listMandiPrices = async (req, res) => {
   try {
-    const { commodity, state, limit } = req.query;
+    let { commodity, state, limit } = req.query;
+
+    // If the client is searching in a non-English UI language, translate
+    // the query to English so it matches Agmarknet's English commodity names.
+    const sourceLang = sourceLangFromReq(req);
+    if (commodity && sourceLang && sourceLang !== 'en') {
+      commodity = await toEnglish(String(commodity).trim(), sourceLang);
+      console.log(`[mandi] commodity query → "${commodity}" (source=${sourceLang})`);
+    }
+    if (state && sourceLang && sourceLang !== 'en') {
+      state = await toEnglish(String(state).trim(), sourceLang);
+    }
+
     const match = {};
-    if (commodity) match.commodityName = new RegExp(commodity.trim(), 'i');
-    if (state) match.state = new RegExp(state.trim(), 'i');
+    if (commodity) match.commodityName = new RegExp(String(commodity).trim(), 'i');
+    if (state) match.state = new RegExp(String(state).trim(), 'i');
 
     const pipeline = [
       { $match: match },
@@ -213,6 +231,7 @@ exports.getMandiReference = async (req, res) => {
     res.status(500).json({ message: 'Server Error', error: error.message });
   }
 };
+
 // List this FPO's auto-pricing rules (which crops re-price themselves from mandi data)
 exports.listAutoRules = async (req, res) => {
   try {

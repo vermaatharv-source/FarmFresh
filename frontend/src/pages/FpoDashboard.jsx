@@ -5,6 +5,9 @@ import API from '../api/axios';
 import { useAuth } from '../context/AuthContext';
 import FpoCompletionPanel from '../components/FpoCompletionPanel';
 import FpoOverview from '../components/dashboard/FpoOverview';
+import AutoTranslate from '../components/AutoTranslate';
+import LanguageSwitcher from '../components/LanguageSwitcher';
+import { useLanguage } from '../context/LanguageContext';
 
 const NAV = [
   { id: 'analytics', label: 'Overview' },
@@ -29,6 +32,7 @@ const kycBadge = (status) => {
 
 export default function FpoDashboard() {
   const { user, logout } = useAuth();
+  const { language } = useLanguage();
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('analytics');
   const [fpoProfile, setFpoProfile] = useState(undefined);
@@ -177,6 +181,7 @@ export default function FpoDashboard() {
           ifscCode: farmerForm.ifscCode,
           bankName: farmerForm.bankName,
         },
+        sourceLanguage: language,
       });
       flash('Farmer registered');
       setFarmerForm({
@@ -227,6 +232,7 @@ export default function FpoDashboard() {
       const res = await API.post('/fpo/batches/intake', {
         ...intakeForm,
         rawQuantityKg: Number(intakeForm.rawQuantityKg),
+        sourceLanguage: language,
       });
       const batch = res.data?.batch || res.data;
       setLastIntakeQr(batch?.qrCodeUrl || null);
@@ -462,17 +468,21 @@ export default function FpoDashboard() {
   }
 
   return (
+    <AutoTranslate>
     <div className="h-screen flex overflow-hidden bg-slate-100">
       {/* Sidebar — fixed height, logout always visible at bottom */}
       <aside className="w-64 h-full bg-slate-900 text-slate-100 flex flex-col shrink-0 overflow-hidden">
         <div className="px-5 py-5 border-b border-slate-700">
-          <BrandLogo size="sm" className="mb-3" />
+          <div className="flex items-center justify-between mb-3">
+            <BrandLogo size="sm" />
+          </div>
+          <LanguageSwitcher className="mb-3 w-full" />
           <p className="text-[10px] uppercase tracking-[0.2em] text-slate-400">FPO Portal</p>
           <h1 className="text-sm font-semibold mt-1 leading-snug line-clamp-2">
             {fpoProfile?.name || 'Register your FPO'}
           </h1>
           {fpoProfile?.registrationNumber && (
-            <p className="text-[11px] text-slate-400 mt-1 font-mono">
+            <p data-no-translate className="text-[11px] text-slate-400 mt-1 font-mono">
               {fpoProfile.registrationNumber}
             </p>
           )}
@@ -1369,5 +1379,6 @@ export default function FpoDashboard() {
         </main>
       </div>
     </div>
+    </AutoTranslate>
   );
 }
