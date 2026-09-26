@@ -50,6 +50,7 @@ if (process.env.TRUST_PROXY) {
   app.set('trust proxy', Number(process.env.TRUST_PROXY) || process.env.TRUST_PROXY === 'true');
 }
 
+const translateRoutes = require('./routes/translateRoutes');
 const authRoutes = require('./routes/authRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const fpoRoutes = require('./routes/fpoRoutes');
@@ -128,7 +129,7 @@ app.use('/api/grade-prices', gradePriceRoutes); // per-crop grade-based pricing 
 app.use('/api/reviews', reviewRoutes); // Product Reviews & Ratings
 app.use('/api/subscriptions', subscriptionRoutes); // Recurring Subscriptions (Subscribe & Save)
 app.use('/api/security', securityRoutes); // Admin-only audit blockchain verification
-
+app.use('/api/translate', translateRoutes);
 // Health check endpoint
 app.get('/', (req, res) => {
   res.json({ service: 'FarmFresh API', status: 'ok' });
