@@ -172,10 +172,25 @@ exports.listMandiPrices = async (req, res) => {
 // Trigger manual sync of eNAM / Agmarknet market prices
 exports.manualPriceSync = async (req, res) => {
   try {
-    await syncAgmarknetPrices();
+    const result = await syncAgmarknetPrices();
+
+    if (!result.success) {
+      // The sync ran but genuinely failed (data.gov.in unreachable, bad API
+      // key, etc.) — previously this was reported as success because
+      // syncAgmarknetPrices swallowed its own errors and never rejected.
+      return res.status(502).json({
+        success: false,
+        message: `eNAM sync failed: ${result.message}`,
+      });
+    }
+
     res.status(200).json({
       success: true,
-      message: 'eNAM market prices synchronized successfully.',
+      message:
+        result.updatedCount > 0
+          ? `eNAM market prices synchronized successfully. ${result.updatedCount} records updated.`
+          : 'Sync completed, but data.gov.in returned no records for today.',
+      updatedCount: result.updatedCount,
     });
   } catch (error) {
     res.status(500).json({

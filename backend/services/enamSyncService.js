@@ -87,6 +87,12 @@ async function fetchMandiRecords() {
 
 /**
  * Fetches today's Mandi market prices from data.gov.in and updates MandiPrice records.
+ *
+ * Returns a result object instead of throwing, so the daily cron job can log
+ * and move on without crashing the process. Callers that need to know whether
+ * it actually worked (e.g. a manual "Sync Now" button) should check
+ * `result.success` rather than assuming a resolved promise means success —
+ * this function never rejects.
  */
 const syncAgmarknetPrices = async () => {
   try {
@@ -96,7 +102,7 @@ const syncAgmarknetPrices = async () => {
 
     if (records.length === 0) {
       console.log('[eNAM Sync] No price records returned for today.');
-      return;
+      return { success: true, updatedCount: 0, message: 'No price records returned for today.' };
     }
 
     const today = new Date();
@@ -130,9 +136,8 @@ const syncAgmarknetPrices = async () => {
     }));
 
     const result = await MandiPrice.bulkWrite(bulkOperations);
-    console.log(
-      `[eNAM Sync] Success! Upserted/Updated ${result.upsertedCount + result.modifiedCount} commodity prices.`
-    );
+    const updatedCount = result.upsertedCount + result.modifiedCount;
+    console.log(`[eNAM Sync] Success! Upserted/Updated ${updatedCount} commodity prices.`);
 
     // Cascade: recompute every FPO's auto-priced crops off the freshly synced rates.
     try {
@@ -140,14 +145,24 @@ const syncAgmarknetPrices = async () => {
     } catch (err) {
       console.error('[eNAM Sync] Auto-pricing cascade failed:', err.message);
     }
+
+    return { success: true, updatedCount };
   } catch (error) {
+    const message = error.isGatewayHtml
+      ? `data.gov.in gateway is down/unreachable after ${MAX_ATTEMPTS} attempts (${error.message}). Will retry on the next scheduled sync.`
+      : error.response?.data
+        ? typeof error.response.data === 'string'
+          ? error.response.data.slice(0, 500)
+          : JSON.stringify(error.response.data).slice(0, 500)
+        : error.message;
+
     if (error.isGatewayHtml) {
-      console.error(
-        `[eNAM Sync Error]: data.gov.in gateway is down/unreachable after ${MAX_ATTEMPTS} attempts (${error.message}). Will retry on the next scheduled sync.`
-      );
+      console.error(`[eNAM Sync Error]: ${message}`);
     } else {
-      console.error('[eNAM Sync Error]:', error.response?.data || error.message);
+      console.error('[eNAM Sync Error]:', message);
     }
+
+    return { success: false, updatedCount: 0, message };
   }
 };
 
