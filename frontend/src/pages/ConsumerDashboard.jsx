@@ -713,7 +713,7 @@ export default function ConsumerDashboard() {
                       )}
                     </p>
                     <p className="text-green-700 font-bold mt-1">
-                      ₹{item.pricePerKg}
+                      ₹{Number(item.pricePerKg).toFixed(2)}
                       <span className="text-xs font-normal text-gray-500">/kg</span>
                     </p>
                     <p className="text-xs text-gray-500 mb-1">
@@ -963,7 +963,7 @@ export default function ConsumerDashboard() {
                             {order.deliverySlot && ` · Slot: ${order.deliverySlot}`}
                           </p>
                           <p className="text-xs text-gray-500 mt-0.5">
-                            Qty: <span className="font-semibold text-gray-800">{order.quantityKg} kg</span>
+                            Qty: <span className="font-semibold text-gray-800">{Number(order.quantityKg).toFixed(1)} kg</span>
                           </p>
                         </div>
                       </div>
@@ -1365,7 +1365,7 @@ export default function ConsumerDashboard() {
                         <h4 className="font-bold text-gray-900 text-sm">{item.name}</h4>
                         <p className="text-xs text-gray-500">By {item.seller}</p>
                         <p className="text-emerald-800 font-bold mt-1 text-sm">
-                          ₹{item.pricePerKg} <span className="text-xs font-normal text-gray-500">/kg</span>
+                          ₹{Number(item.pricePerKg).toFixed(2)} <span className="text-xs font-normal text-gray-500">/kg</span>
                         </p>
                       </div>
 

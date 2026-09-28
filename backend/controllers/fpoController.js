@@ -11,6 +11,7 @@ const fs = require('fs');
 const csv = require('csv-parser');
 const QRCode = require('qrcode');
 const { notify } = require('../utils/notify');
+const { generateTransactionId } = require('../utils/idGenerator');
 const { validateFpoDetails } = require('../utils/fpoValidation');
 const { normalizeEmail, isValidEmail, passwordProblem } = require('../utils/authValidation');
 const { hasSignature } = require('../middleware/upload');
@@ -661,8 +662,9 @@ exports.createAutoPayout = async (req, res) => {
       });
     }
 
-    const { paymentMethod = 'BANK_TRANSFER', fundedFrom = 'FPO_CASH', transactionId } =
-      req.body || {};
+    const { paymentMethod = 'BANK_TRANSFER', fundedFrom = 'FPO_CASH' } = req.body || {};
+    // Transaction ID is always system-generated (like the batch number).
+    const transactionId = generateTransactionId('PAY');
 
     const payout = await Payout.create({
       fpo: fpoId,
@@ -674,9 +676,9 @@ exports.createAutoPayout = async (req, res) => {
       paymentMethod,
       fundedFrom,
       transactionId,
-      status: transactionId ? 'Completed' : 'Pending',
-      paymentDate: transactionId ? new Date() : undefined,
-      paidAt: transactionId ? new Date() : undefined,
+      status: 'Completed',
+      paymentDate: new Date(),
+      paidAt: new Date(),
     });
 
     if (payout.status === 'Completed') {
@@ -713,7 +715,6 @@ exports.createPayout = async (req, res) => {
       farmerId,
       batchId,
       amount,
-      transactionId,
       paymentMethod = 'BANK_TRANSFER',
       fundedFrom = 'FPO_CASH',
       } = req.body;
@@ -733,6 +734,7 @@ exports.createPayout = async (req, res) => {
       return res.status(400).json({ message: 'A valid payout amount is required.' });
     if (batch && batch.payoutStatus === 'PAID')
       return res.status(400).json({ message: 'This batch has already been paid.' });
+    const transactionId = generateTransactionId('PAY');
     const payout = await Payout.create({
       fpo: fpoId,
       farmer: farmer._id,
@@ -743,9 +745,9 @@ exports.createPayout = async (req, res) => {
       paymentMethod,
       fundedFrom,
       transactionId,
-      status: transactionId ? 'Completed' : 'Pending',
-      paymentDate: transactionId ? new Date() : undefined,
-      paidAt: transactionId ? new Date() : undefined,
+      status: 'Completed',
+      paymentDate: new Date(),
+      paidAt: new Date(),
     });
     if (batch && payout.status === 'Completed') {
       batch.payoutStatus = 'PAID';
@@ -1081,8 +1083,7 @@ exports.completePayout = async (req, res) => {
     if (payout.status === 'Completed')
       return res.status(400).json({ message: 'Payout already completed.' });
     payout.status = 'Completed';
-    payout.transactionId =
-      req.body.transactionId || payout.transactionId || `TXN-${Date.now()}`;
+    payout.transactionId = payout.transactionId || generateTransactionId('PAY');
     payout.paymentDate = new Date();
     payout.paidAt = new Date();
     await payout.save();

@@ -9,6 +9,9 @@ const {
   restoreOrderStock,
 } = require('../services/inventoryService');
 const { notify, notifyUser } = require('../utils/notify');
+const { recordOrderPayment, recordRefund } = require('../services/paymentService');
+const { generateTransactionId } = require('../utils/idGenerator');
+const { round2 } = require('../config/platformFee');
 
 const getFpoId = async (userId) => {
   const f = await Fpo.findOne({ $or: [{ adminUser: userId }, { staff: userId }] });
@@ -47,7 +50,7 @@ exports.createOrder = async (req, res) => {
             listing: existingListing._id,
             consumer: req.user._id || req.user.id,
             quantityKg: qty,
-            totalPrice: qty * existingListing.pricePerKg,
+            totalPrice: round2(qty * existingListing.pricePerKg),
             buyerType,
             gradeOrdered: existingListing.grade,
             status: 'Placed',
@@ -56,6 +59,9 @@ exports.createOrder = async (req, res) => {
         { session }
       );
       order = created[0];
+
+      // Split payment: order amount -> FPO, platform fee -> platform (auto transaction ID).
+      await recordOrderPayment({ order, session });
 
       const updatedListing = await applyOrderStock({ listing: existingListing, qty, orderId: order._id, session });
 
@@ -286,15 +292,19 @@ exports.processRefund = async (req, res) => {
       return res.status(400).json({ message: 'Refund already processed.' });
     }
 
+    // Refund ID is always system-generated (no manual entry).
+    const refundAmount = order.totalCharged || order.totalPrice;
     order.refundStatus = 'Processed';
-    order.refundTransactionId = req.body.refundTransactionId || `REF-${Date.now()}`;
+    order.refundTransactionId = generateTransactionId('REF');
     order.status = 'Refunded';
+    if (order.paymentStatus === 'Paid') order.paymentStatus = 'Refunded';
     await order.save();
+    await recordRefund({ order, refundTransactionId: order.refundTransactionId });
 
     await notifyUser(
       order.consumer,
       'RefundProcessed',
-      `Refund of ₹${order.totalPrice} for order #${order._id.toString().slice(-6).toUpperCase()} has been processed. Transaction Ref: ${order.refundTransactionId}`,
+      `Refund of ₹${refundAmount} for order #${order._id.toString().slice(-6).toUpperCase()} has been processed. Transaction Ref: ${order.refundTransactionId}`,
       { orderId: order._id }
     );
 

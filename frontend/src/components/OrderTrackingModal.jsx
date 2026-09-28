@@ -363,7 +363,7 @@ export default function OrderTrackingModal({ order, isOpen, onClose, onOrderUpda
                 </p>
               </div>
               <div className="text-right">
-                <p className="text-lg font-bold text-emerald-800">₹{itemPrice}</p>
+                <p className="text-lg font-bold text-emerald-800">₹{Number(itemPrice).toFixed(2)}</p>
                 <p className="text-[11px] text-gray-400">
                   {itemQty > 0 ? `₹${(itemPrice / itemQty).toFixed(0)}/kg` : ''}
                 </p>
@@ -433,7 +433,7 @@ export default function OrderTrackingModal({ order, isOpen, onClose, onOrderUpda
                 )}
                 <div className="flex justify-between pt-1 border-t font-bold text-gray-900">
                   <span>Grand Total:</span>
-                  <span className="text-emerald-800">₹{itemPrice}</span>
+                  <span className="text-emerald-800">₹{Number(itemPrice).toFixed(2)}</span>
                 </div>
                 {currentOrder.refundStatus && currentOrder.refundStatus !== 'NotRequired' && (
                   <div className="flex justify-between pt-1 text-amber-700 font-semibold">
@@ -598,7 +598,7 @@ export default function OrderTrackingModal({ order, isOpen, onClose, onOrderUpda
               <div>
                 <p className="font-bold">Refund Processed Successfully</p>
                 <p className="text-purple-800 mt-0.5">
-                  The refund of ₹{itemPrice} has been approved and issued to your payment account.
+                  The refund of ₹{Number(itemPrice).toFixed(2)} has been approved and issued to your payment account.
                 </p>
                 {currentOrder.refundTransactionId && (
                   <p className="font-mono text-purple-700 mt-1">

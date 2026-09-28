@@ -88,7 +88,6 @@ export default function FpoDashboard() {
     farmerId: '',
     batchId: '',
     amount: '',
-    transactionId: '',
   });
   const [orderCooldown, setOrderCooldown] = useState({}); // orderId -> timestamp ms
   const [listingImages, setListingImages] = useState([]);
@@ -272,10 +271,9 @@ export default function FpoDashboard() {
       await API.post('/fpo/payouts', {
         farmerId: payoutForm.farmerId,
         batchId: payoutForm.batchId,
-        transactionId: payoutForm.transactionId || undefined,
       });
-      flash('Payout recorded');
-      setPayoutForm({ farmerId: '', batchId: '', amount: '', transactionId: '' });
+      flash('Payout recorded (transaction ID auto-generated)');
+      setPayoutForm({ farmerId: '', batchId: '', amount: '' });
       loadAll();
     } catch (e) {
       flash(e.response?.data?.message || 'Payout failed (KYC may be required)', true);
@@ -283,7 +281,7 @@ export default function FpoDashboard() {
   };
 
   const onPayoutFarmerChange = (farmerId) => {
-    setPayoutForm({ farmerId, batchId: '', amount: '', transactionId: payoutForm.transactionId });
+    setPayoutForm({ farmerId, batchId: '', amount: '' });
   };
 
   const onPayoutBatchChange = (batchId) => {
@@ -1004,7 +1002,7 @@ export default function FpoDashboard() {
                       <tr key={l._id} className="border-b">
                         <td className="px-4 py-2">{l.produceType}</td>
                         <td className="px-4 py-2">{l.grade}</td>
-                        <td className="px-4 py-2">₹{l.pricePerKg}/kg</td>
+                        <td className="px-4 py-2">₹{Number(l.pricePerKg).toFixed(2)}/kg</td>
                         <td className="px-4 py-2">{l.availableQuantityKg} kg</td>
                         <td className="px-4 py-2">{l.status}</td>
                         <td className="px-4 py-2 space-x-2">
@@ -1148,10 +1146,11 @@ export default function FpoDashboard() {
                   value={payoutForm.amount !== '' && payoutForm.amount != null ? `₹${payoutForm.amount}` : ''}
                 />
                 <input
-                  placeholder="Transaction ID"
-                  className="border rounded px-3 py-2 text-sm"
-                  value={payoutForm.transactionId}
-                  onChange={(e) => setPayoutForm({ ...payoutForm, transactionId: e.target.value })}
+                  readOnly
+                  type="text"
+                  placeholder="Transaction ID (auto-generated)"
+                  className="border rounded px-3 py-2 text-sm bg-slate-50 text-slate-500"
+                  value=""
                 />
                 <button type="submit" className="bg-emerald-700 text-white text-sm px-4 py-2 rounded">
                   Save payout
@@ -1176,6 +1175,7 @@ export default function FpoDashboard() {
                       <th className="text-left px-4 py-2">Amount</th>
                       <th className="text-left px-4 py-2">Method</th>
                       <th className="text-left px-4 py-2">Funded from</th>
+                      <th className="text-left px-4 py-2">Txn ID</th>
                       <th className="text-left px-4 py-2">Status</th>
                     </tr>
                   </thead>
@@ -1186,6 +1186,7 @@ export default function FpoDashboard() {
                         <td className="px-4 py-2">₹{p.amount || p.totalAmount}</td>
                         <td className="px-4 py-2">{p.paymentMethod}</td>
                         <td className="px-4 py-2">{p.fundedFrom}</td>
+                        <td className="px-4 py-2 font-mono text-xs">{p.transactionId || '—'}</td>
                         <td className="px-4 py-2">{p.status}</td>
                       </tr>
                     ))}

@@ -1,13 +1,37 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import API from '../api/axios';
 
 const CartContext = createContext();
+
+// Must match the backend default in backend/config/platformFee.js.
+// The real value is fetched from the server on load; this is only the initial value.
+const DEFAULT_PLATFORM_FEE_PERCENT = 30;
+
+const round2 = (n) => {
+  const v = Number(n);
+  return Number.isFinite(v) ? Math.round((v + Number.EPSILON) * 100) / 100 : 0;
+};
+
+// Drop corrupt / stale entries from localStorage so totals can never become NaN.
+const sanitizeCart = (items) =>
+  Array.isArray(items)
+    ? items.filter(
+        (item) =>
+          item &&
+          item.type === 'FPO' &&
+          item.id &&
+          Number.isFinite(Number(item.pricePerKg)) &&
+          Number.isFinite(Number(item.quantity)) &&
+          Number(item.quantity) > 0
+      )
+    : [];
 
 export function CartProvider({ children }) {
   const [cart, setCart] = useState(() => {
     try {
       const saved = localStorage.getItem('farmfresh_cart');
       // Drop stale farmer-direct items left over from before the farmer portal was removed
-      return saved ? JSON.parse(saved).filter((item) => item.type === 'FPO') : [];
+      return saved ? sanitizeCart(JSON.parse(saved)) : [];
     } catch {
       return [];
     }
@@ -24,6 +48,7 @@ export function CartProvider({ children }) {
 
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
+  const [platformFeePercent, setPlatformFeePercent] = useState(DEFAULT_PLATFORM_FEE_PERCENT);
 
   useEffect(() => {
     try {
@@ -41,10 +66,29 @@ export function CartProvider({ children }) {
     }
   }, [wishlist]);
 
+  // Read the platform fee from the backend so one PLATFORM_FEE_PERCENT ENV
+  // value controls both the cart and checkout displays.
+  useEffect(() => {
+    let active = true;
+    API.get('/orders/platform-fee')
+      .then((res) => {
+        const percent = Number(res.data?.percent);
+        if (active && res.data?.percent !== undefined && res.data?.percent !== null && Number.isFinite(percent) && percent >= 0 && percent <= 100) {
+          setPlatformFeePercent(percent);
+        }
+      })
+      .catch(() => {
+        // Keep the safe UI fallback; the server remains authoritative at checkout.
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const addToCart = (product, quantity = 1, buyerType = 'INDIVIDUAL') => {
     const minQty = Number(product.minOrderQtyKg || 1);
     const available = Number(product.availableQuantityKg ?? product.quantityAvailable ?? 999);
-    const qtyToAdd = Math.max(minQty, Number(quantity));
+    const qtyToAdd = Math.round(Math.max(minQty, Number(quantity)) * 10) / 10;
 
     setCart((prevCart) => {
       const existingIndex = prevCart.findIndex((item) => item.id === product._id);
@@ -80,7 +124,7 @@ export function CartProvider({ children }) {
   };
 
   const updateQuantity = (itemId, newQty) => {
-    const qty = Number(newQty);
+    const qty = Math.round(Number(newQty) * 10) / 10;
     setCart((prevCart) => {
       if (qty <= 0) {
         return prevCart.filter((item) => item.id !== itemId);
@@ -132,9 +176,14 @@ export function CartProvider({ children }) {
     return wishlist.some((item) => item.id === productId);
   };
 
-  const cartTotal = cart.reduce((sum, item) => sum + item.pricePerKg * item.quantity, 0);
-  const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+  // Per-item amounts are rounded to paise exactly like the server does
+  // (one order per cart item), so the cart total always matches the final charge.
+  const itemAmounts = cart.map((item) => round2(Number(item.pricePerKg) * Number(item.quantity)));
+  const cartTotal = round2(itemAmounts.reduce((sum, amt) => sum + amt, 0));
+  const cartCount = cart.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
   const wishlistCount = wishlist.length;
+  const platformFee = round2(itemAmounts.reduce((sum, amt) => sum + round2((amt * platformFeePercent) / 100), 0));
+  const grandTotal = round2(cartTotal + platformFee);
 
   return (
     <CartContext.Provider
@@ -150,6 +199,9 @@ export function CartProvider({ children }) {
         cartTotal,
         cartCount,
         wishlistCount,
+        platformFeePercent,
+        platformFee,
+        grandTotal,
         isCartOpen,
         setIsCartOpen,
         isCheckoutOpen,

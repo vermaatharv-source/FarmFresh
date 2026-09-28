@@ -4,7 +4,16 @@ import { useAuth } from '../context/AuthContext';
 import API from '../api/axios';
 
 export default function CheckoutModal() {
-  const { isCheckoutOpen, setIsCheckoutOpen, cart, cartTotal, clearCart } = useCart();
+  const {
+    isCheckoutOpen,
+    setIsCheckoutOpen,
+    cart,
+    cartTotal,
+    clearCart,
+    platformFeePercent,
+    platformFee,
+    grandTotal,
+  } = useCart();
   const { user, updateUser } = useAuth();
 
   const [addresses, setAddresses] = useState(user?.addresses || []);
@@ -30,9 +39,6 @@ export default function CheckoutModal() {
   const [cardData, setCardData] = useState({ number: '', expiry: '', cvv: '', name: user?.name || '' });
 
   // Coupon state
-  const [couponCode, setCouponCode] = useState('');
-  const [appliedCoupon, setAppliedCoupon] = useState(null);
-  const [couponError, setCouponError] = useState('');
 
   // Processing & Confirmation state
   const [submitting, setSubmitting] = useState(false);
@@ -63,34 +69,6 @@ export default function CheckoutModal() {
   }, [isCheckoutOpen, user]);
 
   if (!isCheckoutOpen) return null;
-
-  const deliveryFee = cartTotal >= 500 || cartTotal === 0 ? 0 : 40;
-  const discountAmount = appliedCoupon ? appliedCoupon.discount : 0;
-  const grandTotal = Math.max(0, cartTotal + deliveryFee - discountAmount);
-
-  const handleApplyCoupon = async (codeToUse) => {
-    const code = (codeToUse || couponCode).trim().toUpperCase();
-    setCouponError('');
-    if (!code) return;
-
-    try {
-      const res = await API.post('/orders/validate-coupon', {
-        couponCode: code,
-        subtotal: cartTotal,
-      });
-      setAppliedCoupon(res.data);
-      setCouponCode(code);
-    } catch (err) {
-      setCouponError(err.response?.data?.message || 'Invalid coupon code');
-      setAppliedCoupon(null);
-    }
-  };
-
-  const handleRemoveCoupon = () => {
-    setAppliedCoupon(null);
-    setCouponCode('');
-    setCouponError('');
-  };
 
   const handleSaveInlineAddress = async (e) => {
     e.preventDefault();
@@ -153,7 +131,6 @@ export default function CheckoutModal() {
         },
         deliverySlot,
         paymentMethod,
-        couponCode: appliedCoupon ? appliedCoupon.code : '',
       };
 
       const res = await API.post('/orders/checkout', payload);
@@ -233,10 +210,10 @@ export default function CheckoutModal() {
               </div>
               <div className="pt-2 border-t text-gray-700">
                 <span className="font-semibold text-gray-900 block mb-0.5">Delivery Address:</span>
-                {completedOrder.deliveryAddress.fullName} · {completedOrder.deliveryAddress.phone}
+                {completedOrder.deliveryAddress?.fullName} · {completedOrder.deliveryAddress?.phone}
                 <br />
-                {completedOrder.deliveryAddress.streetAddress}, {completedOrder.deliveryAddress.city},{' '}
-                {completedOrder.deliveryAddress.state} - {completedOrder.deliveryAddress.pincode}
+                {completedOrder.deliveryAddress?.streetAddress}, {completedOrder.deliveryAddress?.city},{' '}
+                {completedOrder.deliveryAddress?.state} - {completedOrder.deliveryAddress?.pincode}
               </div>
             </div>
 
@@ -248,7 +225,7 @@ export default function CheckoutModal() {
                 <span className="col-span-3 text-right">Amount</span>
               </div>
               <div className="divide-y text-xs">
-                {completedOrder.items.map((it, idx) => (
+                {(completedOrder.items || []).map((it, idx) => (
                   <div key={idx} className="px-4 py-2.5 grid grid-cols-12 items-center">
                     <div className="col-span-6">
                       <p className="font-bold text-gray-900">{it.name}</p>
@@ -260,7 +237,7 @@ export default function CheckoutModal() {
                       {it.quantity} kg
                     </span>
                     <span className="col-span-3 text-right font-bold text-emerald-800">
-                      ₹{(it.pricePerKg * it.quantity).toFixed(2)}
+                      ₹{(Number(it.pricePerKg) * Number(it.quantity)).toFixed(2)}
                     </span>
                   </div>
                 ))}
@@ -268,18 +245,29 @@ export default function CheckoutModal() {
               <div className="bg-emerald-50/50 p-4 border-t space-y-1.5 text-xs">
                 <div className="flex justify-between text-gray-600">
                   <span>Subtotal</span>
-                  <span className="font-semibold">₹{completedOrder.subtotal.toFixed(2)}</span>
+                  <span className="font-semibold">₹{Number(completedOrder.subtotal || 0).toFixed(2)}</span>
                 </div>
                 {completedOrder.discount > 0 && (
                   <div className="flex justify-between text-emerald-700 font-medium">
                     <span>Discount Applied</span>
-                    <span>-₹{completedOrder.discount.toFixed(2)}</span>
+                    <span>-₹{Number(completedOrder.discount || 0).toFixed(2)}</span>
+                  </div>
+                )}
+                {completedOrder.platformFee > 0 && (
+                  <div className="flex justify-between text-gray-600">
+                    <span>Platform Fee ({completedOrder.platformFeePercent}%)</span>
+                    <span className="font-semibold">₹{Number(completedOrder.platformFee || 0).toFixed(2)}</span>
                   </div>
                 )}
                 <div className="flex justify-between text-sm font-bold text-gray-900 pt-2 border-t">
                   <span>Total Amount Paid</span>
-                  <span className="text-emerald-800 text-base">₹{completedOrder.total.toFixed(2)}</span>
+                  <span className="text-emerald-800 text-base">₹{Number(completedOrder.totalCharged ?? completedOrder.total ?? 0).toFixed(2)}</span>
                 </div>
+                {completedOrder.transactionIds?.length > 0 && (
+                  <div className="pt-2 text-[10px] text-gray-500 font-mono break-all">
+                    Txn ID: {completedOrder.transactionIds.join(', ')}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -470,63 +458,10 @@ export default function CheckoutModal() {
               </div>
             </div>
 
-            {/* Step 3: Promo / Coupon Code */}
-            <div className="space-y-2">
-              <h3 className="text-sm font-bold text-gray-900 flex items-center gap-1.5">
-                <span>🏷️</span> 3. Apply Harvest Coupon
-              </h3>
-              {appliedCoupon ? (
-                <div className="flex items-center justify-between p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs">
-                  <div>
-                    <span className="font-bold text-emerald-900">{appliedCoupon.code} Applied</span>
-                    <p className="text-emerald-700 text-[11px]">{appliedCoupon.description}</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleRemoveCoupon}
-                    className="text-xs text-red-600 hover:underline font-bold"
-                  >
-                    Remove
-                  </button>
-                </div>
-              ) : (
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    placeholder="Enter coupon (e.g. FRESH10, WELCOME50)"
-                    value={couponCode}
-                    onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
-                    className="flex-1 border rounded-lg px-3 py-2 text-xs uppercase outline-none focus:border-emerald-500 font-mono"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => handleApplyCoupon()}
-                    className="bg-gray-800 text-white text-xs font-semibold px-4 py-2 rounded-lg hover:bg-gray-900 transition"
-                  >
-                    Apply
-                  </button>
-                </div>
-              )}
-              {couponError && <p className="text-red-600 text-xs">{couponError}</p>}
-              <div className="flex flex-wrap gap-1.5 pt-1">
-                <span className="text-[11px] text-gray-400">Try:</span>
-                {['FRESH10', 'WELCOME50', 'KISANFEST'].map((c) => (
-                  <button
-                    type="button"
-                    key={c}
-                    onClick={() => handleApplyCoupon(c)}
-                    className="text-[10px] bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-mono font-semibold px-2 py-0.5 rounded border border-emerald-200 transition"
-                  >
-                    {c}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Step 4: Payment Method */}
+            {/* Step 3: Payment Method */}
             <div className="space-y-3">
               <h3 className="text-sm font-bold text-gray-900 flex items-center gap-1.5">
-                <span>💳</span> 4. Payment Method
+                <span>💳</span> 3. Payment Method
               </h3>
               <div className="grid grid-cols-3 gap-2 text-xs">
                 {[
@@ -631,19 +566,9 @@ export default function CheckoutModal() {
                 <span className="font-semibold text-gray-900">₹{cartTotal.toFixed(2)}</span>
               </div>
               <div className="flex justify-between text-gray-600">
-                <span>Standard Delivery Fee</span>
-                {deliveryFee === 0 ? (
-                  <span className="font-bold text-emerald-700">FREE</span>
-                ) : (
-                  <span className="font-semibold text-gray-900">₹{deliveryFee}</span>
-                )}
+                <span>Platform Fee ({platformFeePercent}%)</span>
+                <span className="font-semibold text-gray-900">₹{platformFee.toFixed(2)}</span>
               </div>
-              {discountAmount > 0 && (
-                <div className="flex justify-between text-emerald-700 font-bold">
-                  <span>Coupon Discount ({appliedCoupon.code})</span>
-                  <span>-₹{discountAmount.toFixed(2)}</span>
-                </div>
-              )}
               <div className="flex justify-between text-sm font-bold text-gray-900 pt-2 border-t">
                 <span>Grand Total</span>
                 <span className="text-emerald-800 text-base">₹{grandTotal.toFixed(2)}</span>

@@ -5,6 +5,7 @@ const Listing = require('../models/Listing');
 const FpoOrder = require('../models/FpoOrder');
 const { assertListingAvailable, applyOrderStock } = require('./inventoryService');
 const { notifyUser, notify } = require('../utils/notify');
+const { recordOrderPayment } = require('./paymentService');
 
 /**
  * Fix (Issue 3): subscriptions previously only had create / pause / resume /
@@ -77,6 +78,8 @@ async function fulfillOneSubscription(subscription) {
         { session }
       );
       const order = created[0];
+
+      await recordOrderPayment({ order, session });
 
       await applyOrderStock({ listing, qty: subscription.quantityKg, orderId: order._id, session });
 

@@ -162,7 +162,7 @@ export default function FpoListingDetail() {
   }
 
   const images = listing.images?.length ? listing.images : [];
-  const batch = listing.sourceBatch;
+  const batch = listing.sourceBatch || listing.sourceIntakeId;
   const fpo = listing.fpo;
 
   return (
@@ -304,11 +304,11 @@ export default function FpoListingDetail() {
 
             <div className="bg-white rounded-xl border p-4">
               <p className="text-3xl font-bold text-emerald-700">
-                ₹{listing.pricePerKg}
+                ₹{Number(listing.pricePerKg).toFixed(2)}
                 <span className="text-base font-normal text-gray-500"> / kg</span>
               </p>
               <p className="text-sm text-gray-500 mt-1">
-                {listing.availableQuantityKg} kg available · Minimum order {listing.minOrderQtyKg} kg
+                {Number(listing.availableQuantityKg).toFixed(1)} kg available · Minimum order {Number(listing.minOrderQtyKg).toFixed(1)} kg
               </p>
             </div>
 
@@ -351,10 +351,13 @@ export default function FpoListingDetail() {
                 <input
                   type="number"
                   value={quantity}
-                  onChange={(e) => setQuantity(e.target.value)}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    setQuantity(raw === '' ? '' : Math.round(Number(raw) * 10) / 10);
+                  }}
                   min={listing.minOrderQtyKg}
                   max={listing.availableQuantityKg}
-                  step={buyerType === 'INDIVIDUAL' ? 1 : 5}
+                  step={0.1}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-emerald-500"
                 />
               </div>

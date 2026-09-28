@@ -178,8 +178,8 @@ export default function InvoiceModal({ order, isOpen, onClose }) {
                     </span>
                   </td>
                   <td className="py-3 px-3 text-right font-medium">{itemQty} kg</td>
-                  <td className="py-3 px-4 text-right">₹{unitPrice}</td>
-                  <td className="py-3 px-4 text-right font-bold text-gray-900">₹{subtotal}</td>
+                  <td className="py-3 px-4 text-right">₹{Number(unitPrice).toFixed(2)}</td>
+                  <td className="py-3 px-4 text-right font-bold text-gray-900">₹{Number(subtotal).toFixed(2)}</td>
                 </tr>
               </tbody>
             </table>
@@ -190,7 +190,7 @@ export default function InvoiceModal({ order, isOpen, onClose }) {
             <div className="w-64 space-y-2 text-xs">
               <div className="flex justify-between text-gray-600">
                 <span>Items Subtotal</span>
-                <span className="font-medium text-gray-900">₹{subtotal}</span>
+                <span className="font-medium text-gray-900">₹{Number(subtotal).toFixed(2)}</span>
               </div>
               {discountAmount > 0 && (
                 <div className="flex justify-between text-emerald-700 font-medium">
@@ -204,7 +204,7 @@ export default function InvoiceModal({ order, isOpen, onClose }) {
               </div>
               <div className="flex justify-between pt-2 border-t border-gray-300 text-sm font-bold text-gray-900">
                 <span>Net Total Paid</span>
-                <span className="text-base text-emerald-800 font-black">₹{totalPrice}</span>
+                <span className="text-base text-emerald-800 font-black">₹{Number(totalPrice).toFixed(2)}</span>
               </div>
             </div>
           </div>

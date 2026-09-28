@@ -5,8 +5,17 @@ const FpoOrder = require('../models/FpoOrder');
 const { InventoryError, assertListingAvailable, applyOrderStock } = require('../services/inventoryService');
 const { protect } = require('../middleware/authMiddleware');
 const { notifyUser } = require('../utils/notify');
+const { recordOrderPayment } = require('../services/paymentService');
+const { calculateSplit, round2 } = require('../config/platformFee');
 
 const router = express.Router();
+
+// Public checkout configuration. The percentage comes from the backend ENV,
+// so changing PLATFORM_FEE_PERCENT in one place updates the whole checkout UI.
+router.get('/platform-fee', (req, res) => {
+  const { percent } = calculateSplit(0);
+  res.json({ percent });
+});
 
 // Validate coupon endpoint
 router.post('/validate-coupon', protect, (req, res) => {
@@ -98,30 +107,21 @@ router.post('/checkout', protect, async (req, res) => {
         const listing = await Listing.findOne({ _id: item.id, status: 'Published' }).session(session);
         assertListingAvailable(listing, qty);
 
-        const itemTotal = listing.pricePerKg * qty;
-        subtotal += itemTotal;
+        const itemTotal = round2(listing.pricePerKg * qty);
+        subtotal = round2(subtotal + itemTotal);
         validatedItems.push({ listing, qty, itemTotal, buyerType: item.buyerType || 'INDIVIDUAL' });
       }
 
-      // 2. Coupon calculation
-      let totalDiscount = 0;
-      const code = String(couponCode || '').trim().toUpperCase();
-      if (code === 'FRESH10' && subtotal >= 100) {
-        totalDiscount = Math.min(150, Math.round(subtotal * 0.1));
-      } else if (code === 'WELCOME50' && subtotal >= 200) {
-        totalDiscount = Math.min(subtotal, 50);
-      } else if (code === 'KISANFEST' && subtotal >= 300) {
-        totalDiscount = Math.min(200, Math.round(subtotal * 0.15));
-      }
+      // 2. No checkout discounts/coupons. Platform fee is the only checkout
+      // adjustment and is calculated centrally by paymentService.js.
 
       const createdOrders = [];
-      const discountRatio = subtotal > 0 ? totalDiscount / subtotal : 0;
 
       // 3. Execution pass — every write in this loop is part of the same
       // transaction, via the unified inventory service.
       for (const v of validatedItems) {
-        const itemDiscount = Math.round(v.itemTotal * discountRatio);
-        const finalPrice = Math.max(0, v.itemTotal - itemDiscount);
+        const itemDiscount = 0;
+        const finalPrice = Math.round(v.itemTotal * 100) / 100;
 
         const created = await FpoOrder.create(
           [
@@ -138,12 +138,15 @@ router.post('/checkout', protect, async (req, res) => {
               deliverySlot,
               paymentMethod,
               discountAmount: itemDiscount,
-              couponCode: code,
+              couponCode: '',
             },
           ],
           { session }
         );
         const fOrder = created[0];
+
+        // Split payment: order amount -> FPO, platform fee -> platform. Auto-generates the transaction ID.
+        const payment = await recordOrderPayment({ order: fOrder, session });
 
         const updatedListing = await applyOrderStock({
           listing: v.listing,
@@ -158,14 +161,21 @@ router.post('/checkout', protect, async (req, res) => {
           name: updatedListing.produceType,
           quantity: v.qty,
           total: finalPrice,
+          platformFee: fOrder.platformFee,
+          totalCharged: fOrder.totalCharged,
+          transactionId: payment.transactionId,
         });
       }
 
       orderSummary = {
         itemCount: validatedItems.length,
         subtotal,
-        discount: totalDiscount,
-        total: subtotal - totalDiscount,
+        discount: 0,
+        total: round2(subtotal),
+        platformFee: round2(createdOrders.reduce((s, o) => s + (Number(o.platformFee) || 0), 0)),
+        platformFeePercent: calculateSplit(0).percent,
+        totalCharged: round2(createdOrders.reduce((s, o) => s + (Number(o.totalCharged) || 0), 0)),
+        transactionIds: createdOrders.map((o) => o.transactionId),
         deliverySlot,
         deliveryAddress,
         paymentMethod,

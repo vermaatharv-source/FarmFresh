@@ -139,6 +139,12 @@ exports.getPublicListingById = async (req, res) => {
         select:
           'batchId produceType rawQuantityKg harvestDate collectionDate grading pricingSnapshot qrCodeUrl',
         populate: { path: 'farmer', select: 'name village district state' },
+      })
+      .populate({
+        path: 'sourceIntakeId',
+        select:
+          'batchId produceType rawQuantityKg harvestDate collectionDate grading pricingSnapshot qrCodeUrl',
+        populate: { path: 'farmer', select: 'name village district state' },
       });
 
     if (!listing) {

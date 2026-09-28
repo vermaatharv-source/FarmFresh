@@ -163,12 +163,12 @@ export default function SubscriptionModal({
                   </span>
                 )}
               </div>
-              <p className="text-xs text-gray-500 mt-0.5">Regular Price: ₹{unitPrice}/kg</p>
+              <p className="text-xs text-gray-500 mt-0.5">Regular Price: ₹{Number(unitPrice).toFixed(2)}/kg</p>
             </div>
             <div className="text-right">
-              <span className="text-xs text-gray-400 line-through">₹{basePrice}</span>
+              <span className="text-xs text-gray-400 line-through">₹{Number(basePrice).toFixed(2)}</span>
               <p className="text-base font-extrabold text-emerald-800">
-                ₹{finalPrice} <span className="text-[11px] font-normal text-gray-500">/ delivery</span>
+                ₹{Number(finalPrice).toFixed(2)} <span className="text-[11px] font-normal text-gray-500">/ delivery</span>
               </p>
             </div>
           </div>

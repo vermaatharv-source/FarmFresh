@@ -11,12 +11,12 @@ export default function CartDrawer() {
     clearCart,
     cartTotal,
     setIsCheckoutOpen,
+    platformFeePercent,
+    platformFee,
+    grandTotal,
   } = useCart();
 
   if (!isCartOpen) return null;
-
-  const deliveryFee = cartTotal >= 500 || cartTotal === 0 ? 0 : 40;
-  const grandTotal = cartTotal + deliveryFee;
 
   const handleProceedToCheckout = () => {
     setIsCartOpen(false);
@@ -114,7 +114,7 @@ export default function CartDrawer() {
                       </div>
 
                       <div className="flex items-baseline gap-2 mt-1">
-                        <span className="text-sm font-bold text-emerald-800">₹{item.pricePerKg}/kg</span>
+                        <span className="text-sm font-bold text-emerald-800">₹{Number(item.pricePerKg).toFixed(2)}/kg</span>
                         {item.buyerType && item.buyerType !== 'INDIVIDUAL' && (
                           <span className="text-[10px] bg-gray-100 text-gray-600 px-1 rounded">
                             {item.buyerType}
@@ -132,7 +132,7 @@ export default function CartDrawer() {
                         >
                           -
                         </button>
-                        <span className="px-2 text-xs font-bold text-gray-800">{item.quantity} kg</span>
+                        <span className="px-2 text-xs font-bold text-gray-800">{Number(item.quantity).toFixed(1)} kg</span>
                         <button
                           onClick={() => updateQuantity(item.id, item.quantity + 1)}
                           disabled={item.quantity >= item.availableStock}
@@ -170,18 +170,12 @@ export default function CartDrawer() {
                   <span className="font-semibold text-gray-800">₹{cartTotal.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span>Delivery Fee</span>
-                  {deliveryFee === 0 ? (
-                    <span className="font-bold text-emerald-700">FREE</span>
-                  ) : (
-                    <span className="font-semibold text-gray-800">₹{deliveryFee}</span>
-                  )}
+                  <span>Platform Fee ({platformFeePercent}%)</span>
+                  <span className="font-semibold text-gray-800">₹{platformFee.toFixed(2)}</span>
                 </div>
-                {deliveryFee > 0 && (
-                  <p className="text-[11px] text-amber-700 bg-amber-50 px-2 py-1 rounded border border-amber-200">
-                    Add ₹{(500 - cartTotal).toFixed(0)} more for FREE standard delivery!
-                  </p>
-                )}
+                <p className="text-[11px] text-slate-500">
+                  Platform fee is added on top of the order amount.
+                </p>
                 <div className="flex justify-between text-sm font-bold text-gray-900 pt-2 border-t">
                   <span>Estimated Total</span>
                   <span className="text-emerald-800 text-base">₹{grandTotal.toFixed(2)}</span>
