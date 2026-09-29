@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import API from '../api/axios';
 import { useAuth } from '../context/AuthContext';
 import AuthorityOverview from '../components/dashboard/AuthorityOverview';
+import { AdminPaymentReport } from '../components/dashboard/PaymentReports';
 
 /**
  * Government / Authority portal (role: admin).
@@ -40,6 +41,9 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [actionMsg, setActionMsg] = useState('');
+  const [paymentData, setPaymentData] = useState(null);
+  const [paymentLoading, setPaymentLoading] = useState(true);
+  const [paymentError, setPaymentError] = useState('');
 
   // Review panel
   const [detail, setDetail] = useState(null);
@@ -66,6 +70,22 @@ export default function AdminDashboard() {
       .then((r) => setSummary(r.data))
       .catch(() => setSummary(null));
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const loadPayments = async () => {
+      setPaymentLoading(true);
+      setPaymentError('');
+      try {
+        const res = await API.get('/payments/admin/platform-revenue');
+        setPaymentData(res.data || null);
+      } catch (err) {
+        setPaymentError(err.response?.data?.message || 'Failed to load platform revenue');
+      } finally {
+        setPaymentLoading(false);
+      }
+    };
+    loadPayments();
   }, []);
 
   const openReview = async (fpoId) => {
@@ -177,6 +197,8 @@ export default function AdminDashboard() {
         )}
 
         <AuthorityOverview fpos={fpos} summary={summary} onReview={openReview} />
+
+        <AdminPaymentReport data={paymentData} loading={paymentLoading} error={paymentError} />
 
         <h2 className="text-base font-semibold text-slate-900 pt-2">All registered FPOs</h2>
 

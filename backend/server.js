@@ -50,6 +50,7 @@ if (process.env.TRUST_PROXY) {
   app.set('trust proxy', Number(process.env.TRUST_PROXY) || process.env.TRUST_PROXY === 'true');
 }
 
+const paymentRoutes = require('./routes/paymentRoutes');
 const translateRoutes = require('./routes/translateRoutes');
 const authRoutes = require('./routes/authRoutes');
 const orderRoutes = require('./routes/orderRoutes');
@@ -116,6 +117,7 @@ app.use(
 );
 
 // API Route mounts
+app.use('/api/payments', paymentRoutes);
 app.use('/api/auth/login', authLimiter);
 app.use('/api/auth/register', authLimiter);
 app.use('/api/auth', authRoutes);

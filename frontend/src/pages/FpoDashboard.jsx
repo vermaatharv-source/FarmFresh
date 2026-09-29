@@ -8,6 +8,7 @@ import FpoOverview from '../components/dashboard/FpoOverview';
 import AutoTranslate from '../components/AutoTranslate';
 import LanguageSwitcher from '../components/LanguageSwitcher';
 import { useLanguage } from '../context/LanguageContext';
+import { FpoPaymentReport } from '../components/dashboard/PaymentReports';
 
 const NAV = [
   { id: 'analytics', label: 'Overview' },
@@ -17,6 +18,7 @@ const NAV = [
   { id: 'listings', label: 'Listings' },
   { id: 'orders', label: 'Orders' },
   { id: 'payouts', label: 'Payouts' },
+  { id: 'earnings', label: 'Marketplace Earnings' },
   { id: 'reports', label: 'Reports' },
   { id: 'audit', label: 'Audit Log' },
   { id: 'settings', label: 'Profile & KYC' },
@@ -44,6 +46,9 @@ export default function FpoDashboard() {
   const [listings, setListings] = useState([]);
   const [fpoOrders, setFpoOrders] = useState([]);
   const [activityLogs, setActivityLogs] = useState([]);
+  const [paymentData, setPaymentData] = useState(null);
+  const [paymentLoading, setPaymentLoading] = useState(false);
+  const [paymentError, setPaymentError] = useState('');
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
 
@@ -161,6 +166,25 @@ export default function FpoDashboard() {
 
   useEffect(() => {
     if (activeTab === 'audit') loadAudit();
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (activeTab !== 'earnings') return;
+    let cancelled = false;
+    const loadPayments = async () => {
+      setPaymentLoading(true);
+      setPaymentError('');
+      try {
+        const res = await API.get('/payments/fpo/earnings');
+        if (!cancelled) setPaymentData(res.data || null);
+      } catch (e) {
+        if (!cancelled) setPaymentError(e.response?.data?.message || 'Failed to load marketplace earnings');
+      } finally {
+        if (!cancelled) setPaymentLoading(false);
+      }
+    };
+    loadPayments();
+    return () => { cancelled = true; };
   }, [activeTab]);
 
   const handleLogout = () => {
@@ -1101,6 +1125,10 @@ export default function FpoDashboard() {
           )}
 
           {/* PAYOUTS */}
+          {activeTab === 'earnings' && (
+            <FpoPaymentReport data={paymentData} loading={paymentLoading} error={paymentError} />
+          )}
+
           {activeTab === 'payouts' && (
             <div className="space-y-6">
               <form onSubmit={submitPayout} className="bg-white border rounded-lg p-5 grid md:grid-cols-2 gap-3">
