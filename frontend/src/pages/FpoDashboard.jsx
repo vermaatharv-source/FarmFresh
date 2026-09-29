@@ -385,6 +385,22 @@ export default function FpoDashboard() {
     }
   };
 
+  const deleteListing = async (l) => {
+    if (
+      !window.confirm(
+        `Delete the listing for ${l.produceType} (Grade ${l.grade})? This cannot be undone. Reserved stock will be released back to inventory.`
+      )
+    )
+      return;
+    try {
+      await API.delete(`/listings/${l._id}`);
+      flash('Listing deleted');
+      loadAll();
+    } catch (e) {
+      flash(e.response?.data?.message || 'Could not delete listing', true);
+    }
+  };
+
   // —— KYC ——
   const uploadKyc = async () => {
     if (!kycFiles.length) return;
@@ -1048,6 +1064,13 @@ export default function FpoDashboard() {
                               Pause
                             </button>
                           )}
+                          <button
+                            type="button"
+                            onClick={() => deleteListing(l)}
+                            className="text-xs text-red-600 hover:underline"
+                          >
+                            Delete
+                          </button>
                         </td>
                       </tr>
                     ))}

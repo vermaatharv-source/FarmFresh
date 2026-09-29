@@ -6,16 +6,30 @@ const AutoPricingRule = require('../models/Autopricingrule');
 const { syncAgmarknetPrices } = require('../services/enamSyncService');
 const { applyRule } = require('../services/Autopricingservice');
 
-// Helper: resolve FPO ID for the logged-in user (mirrors fpoController's helper)
+// Helper to escape special regex characters to prevent ReDoS
+const escapeRegex = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// Helper: resolve FPO ID for the logged-in user
 const getFpoIdForUser = async (userId) => {
   if (!userId) return null;
   const fpo = await Fpo.findOne({ $or: [{ adminUser: userId }, { staff: userId }] });
   return fpo ? fpo._id : null;
 };
 
+// Helper: Normalize crop names to canonical English
+const normalizeCropName = async (cropName, req) => {
+  if (!cropName || !String(cropName).trim()) return '';
+  const sourceLang = sourceLangFromReq(req);
+  try {
+    const translated = await toEnglish(String(cropName).trim(), sourceLang);
+    return String(translated || cropName).trim();
+  } catch (err) {
+    console.error('[canonicalText] Translation failed, falling back to original name:', err.message);
+    return String(cropName).trim();
+  }
+};
+
 // List grade price configs for this FPO.
-// By default only ACTIVE rows are returned — historical rows are no longer kept.
-// Pass ?includeInactive=true only for rare admin debugging.
 exports.list = async (req, res) => {
   try {
     const userId = req.user._id || req.user.id;
@@ -24,7 +38,10 @@ exports.list = async (req, res) => {
 
     const { cropName, includeInactive } = req.query;
     const filter = { fpo: fpoId };
-    if (cropName) filter.cropName = cropName;
+    
+    if (cropName) {
+      filter.cropName = await normalizeCropName(cropName, req);
+    }
     if (includeInactive !== 'true') filter.isActive = true;
 
     const configs = await GradePriceConfig.find(filter).sort({ cropName: 1, effectiveFrom: -1 });
@@ -34,8 +51,7 @@ exports.list = async (req, res) => {
   }
 };
 
-// Create a new grade price config. All previous configs for the same crop
-// (active + historical) are deleted so only the latest prices remain.
+// Create a new grade price config.
 exports.create = async (req, res) => {
   try {
     const userId = req.user._id || req.user.id;
@@ -47,19 +63,21 @@ exports.create = async (req, res) => {
     if (!cropName || !String(cropName).trim()) {
       return res.status(400).json({ message: 'cropName is required.' });
     }
+
     const prices = { gradeAPricePerKg, gradeBPricePerKg, gradeCPricePerKg };
     for (const [key, val] of Object.entries(prices)) {
-      if (val === undefined || val === null || Number(val) < 0) {
+      if (val === undefined || val === null || isNaN(Number(val)) || Number(val) < 0) {
         return res.status(400).json({ message: `${key} must be a valid non-negative number.` });
       }
     }
 
-    // Canonical-English: store crop name in English regardless of UI language.
-    const sourceLang = sourceLangFromReq(req);
-    const cropNameEn = String(await toEnglish(String(cropName).trim(), sourceLang)).trim();
-    console.log(`[gradePrice] cropName "${cropName}" → "${cropNameEn}" (source=${sourceLang})`);
+    if (referenceMarketPrice != null && (isNaN(Number(referenceMarketPrice)) || Number(referenceMarketPrice) < 0)) {
+      return res.status(400).json({ message: 'referenceMarketPrice must be a non-negative number.' });
+    }
 
-    // Flush every previous price row for this crop — no historical leftovers.
+    const cropNameEn = await normalizeCropName(cropName, req);
+
+    // Flush previous price rows for this crop
     await GradePriceConfig.deleteMany({ fpo: fpoId, cropName: cropNameEn });
 
     const config = await GradePriceConfig.create({
@@ -81,7 +99,7 @@ exports.create = async (req, res) => {
   }
 };
 
-// Update a config's prices in place (does not change isActive or cropName)
+// Update a config's prices in place
 exports.update = async (req, res) => {
   try {
     const userId = req.user._id || req.user.id;
@@ -95,11 +113,18 @@ exports.update = async (req, res) => {
 
     for (const [field, val] of [['gradeAPricePerKg', gradeAPricePerKg], ['gradeBPricePerKg', gradeBPricePerKg], ['gradeCPricePerKg', gradeCPricePerKg]]) {
       if (val !== undefined) {
-        if (Number(val) < 0) return res.status(400).json({ message: `${field} must be a non-negative number.` });
+        if (isNaN(Number(val)) || Number(val) < 0) return res.status(400).json({ message: `${field} must be a non-negative number.` });
         config[field] = Number(val);
       }
     }
-    if (referenceMarketPrice !== undefined) config.referenceMarketPrice = Number(referenceMarketPrice);
+    
+    if (referenceMarketPrice !== undefined) {
+      if (isNaN(Number(referenceMarketPrice)) || Number(referenceMarketPrice) < 0) {
+        return res.status(400).json({ message: 'referenceMarketPrice must be a non-negative number.' });
+      }
+      config.referenceMarketPrice = Number(referenceMarketPrice);
+    }
+    
     if (effectiveFrom !== undefined) config.effectiveFrom = new Date(effectiveFrom);
     config.updatedBy = userId;
 
@@ -110,7 +135,7 @@ exports.update = async (req, res) => {
   }
 };
 
-// Permanently remove a grade price config (no historical retention).
+// Permanently remove a grade price config
 exports.deactivate = async (req, res) => {
   try {
     const userId = req.user._id || req.user.id;
@@ -126,33 +151,21 @@ exports.deactivate = async (req, res) => {
   }
 };
 
-// List latest Mandi prices across commodities/states/markets, for a board/table view.
-// Returns one (most recent) record per commodity+state combination so different
-// mandis for the same crop are shown separately instead of being collapsed.
+// List latest Mandi prices across commodities/states/markets
 exports.listMandiPrices = async (req, res) => {
   try {
     let { commodity, state, limit } = req.query;
 
-    // If the client is searching in a non-English UI language, translate
-    // the query to English so it matches Agmarknet's English commodity names.
-    const sourceLang = sourceLangFromReq(req);
-    if (commodity && sourceLang && sourceLang !== 'en') {
-      commodity = await toEnglish(String(commodity).trim(), sourceLang);
-      console.log(`[mandi] commodity query → "${commodity}" (source=${sourceLang})`);
-    }
-    if (state && sourceLang && sourceLang !== 'en') {
-      state = await toEnglish(String(state).trim(), sourceLang);
-    }
+    if (commodity) commodity = await normalizeCropName(commodity, req);
+    if (state) state = await normalizeCropName(state, req);
 
     const match = {};
-    if (commodity) match.commodityName = new RegExp(String(commodity).trim(), 'i');
-    if (state) match.state = new RegExp(String(state).trim(), 'i');
+    if (commodity) match.commodityName = new RegExp(escapeRegex(commodity.trim()), 'i');
+    if (state) match.state = new RegExp(escapeRegex(state.trim()), 'i');
 
     const pipeline = [
       { $match: match },
-      { $sort: { date: -1 } },
-      {
-        $group: {
+      { $sort: { date: -1 } },       {$group: {
           _id: { commodityName: '$commodityName', state: '$state' },
           doc: { $first: '$$ROOT' },
         },
@@ -160,7 +173,7 @@ exports.listMandiPrices = async (req, res) => {
       { $replaceRoot: { newRoot: '$doc' } },
       { $sort: { commodityName: 1, state: 1 } },
     ];
-    if (limit) pipeline.push({ $limit: Number(limit) });
+    if (limit && !isNaN(Number(limit))) pipeline.push({ $limit: Number(limit) });
 
     const prices = await MandiPrice.aggregate(pipeline);
     res.json(prices);
@@ -175,9 +188,6 @@ exports.manualPriceSync = async (req, res) => {
     const result = await syncAgmarknetPrices();
 
     if (!result.success) {
-      // The sync ran but genuinely failed (data.gov.in unreachable, bad API
-      // key, etc.) — previously this was reported as success because
-      // syncAgmarknetPrices swallowed its own errors and never rejected.
       return res.status(502).json({
         success: false,
         message: `eNAM sync failed: ${result.message}`,
@@ -200,7 +210,7 @@ exports.manualPriceSync = async (req, res) => {
   }
 };
 
-// Get latest Mandi reference price for a given crop/commodity (with automatic real-time fallback sync)
+// Get latest Mandi reference price for a given crop/commodity
 exports.getMandiReference = async (req, res) => {
   try {
     const { cropName, state, market } = req.query;
@@ -209,25 +219,25 @@ exports.getMandiReference = async (req, res) => {
       return res.status(400).json({ message: 'cropName query parameter is required.' });
     }
 
-    const filter = {
-      commodityName: new RegExp(cropName.trim(), 'i'),
-    };
-    if (state) filter.state = new RegExp(state.trim(), 'i');
-    if (market) filter.market = new RegExp(market.trim(), 'i');
+    const normalizedCrop = await normalizeCropName(cropName, req);
 
-    // 1. Check local MongoDB cache
+    const filter = {
+      commodityName: new RegExp(escapeRegex(normalizedCrop.trim()), 'i'),
+    };
+    if (state) filter.state = new RegExp(escapeRegex(state.trim()), 'i');
+    if (market) filter.market = new RegExp(escapeRegex(market.trim()), 'i');
+
     let latestPrice = await MandiPrice.findOne(filter).sort({ date: -1 });
 
-    // 2. Automatic Fallback: If missing, perform an on-demand sync from eNAM API
     if (!latestPrice) {
-      console.log(`[eNAM Auto-Fetch] Mandi record for '${cropName}' missing in DB. Syncing from data.gov.in...`);
+      console.log(`[eNAM Auto-Fetch] Mandi record for '${normalizedCrop}' missing in DB. Syncing from data.gov.in...`);
       await syncAgmarknetPrices();
       latestPrice = await MandiPrice.findOne(filter).sort({ date: -1 });
     }
 
     if (!latestPrice) {
       return res.status(404).json({
-        message: `No live Mandi price data available for '${cropName}' in Agmarknet/eNAM records.`,
+        message: `No live Mandi price data available for '${normalizedCrop}' in Agmarknet/eNAM records.`,
       });
     }
 
@@ -247,7 +257,7 @@ exports.getMandiReference = async (req, res) => {
   }
 };
 
-// List this FPO's auto-pricing rules (which crops re-price themselves from mandi data)
+// List this FPO's auto-pricing rules
 exports.listAutoRules = async (req, res) => {
   try {
     const userId = req.user._id || req.user.id;
@@ -261,8 +271,7 @@ exports.listAutoRules = async (req, res) => {
   }
 };
 
-// Create or update the auto-pricing rule for one crop, and apply it immediately
-// (instead of waiting for the next cron sync) so the admin sees the effect now.
+// Create or update the auto-pricing rule for one crop
 exports.upsertAutoRule = async (req, res) => {
   try {
     const userId = req.user._id || req.user.id;
@@ -274,8 +283,10 @@ exports.upsertAutoRule = async (req, res) => {
       return res.status(400).json({ message: 'cropName is required.' });
     }
 
+    const normalizedCrop = await normalizeCropName(cropName, req);
+
     const rule = await AutoPricingRule.findOneAndUpdate(
-      { fpo: fpoId, cropName: cropName.trim() },
+      { fpo: fpoId, cropName: normalizedCrop },
       {
         $set: {
           gradeADiscountPct: gradeADiscountPct != null ? Number(gradeADiscountPct) : 0,
@@ -291,9 +302,6 @@ exports.upsertAutoRule = async (req, res) => {
       { new: true, upsert: true }
     );
 
-    // Force an immediate re-apply even if the modal price hasn't moved since
-    // last run — the admin just changed the discount %, so the old "no
-    // change" guard shouldn't block this one-off apply.
     rule.lastAppliedModalPrice = undefined;
     const applied = await applyRule(rule);
 
@@ -308,7 +316,7 @@ exports.upsertAutoRule = async (req, res) => {
   }
 };
 
-// Enable/disable a rule without touching its discount %s
+// Enable/disable a rule
 exports.toggleAutoRule = async (req, res) => {
   try {
     const userId = req.user._id || req.user.id;
@@ -328,8 +336,7 @@ exports.toggleAutoRule = async (req, res) => {
   }
 };
 
-// Remove a rule entirely — the crop goes back to being priced manually.
-// The last active GradePriceConfig is kept so grading still has a price to use.
+// Remove a rule entirely
 exports.deleteAutoRule = async (req, res) => {
   try {
     const userId = req.user._id || req.user.id;
