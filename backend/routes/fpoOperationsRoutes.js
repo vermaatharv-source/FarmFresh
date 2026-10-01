@@ -1,0 +1,20 @@
+const express = require('express');
+const router = express.Router();
+const c = require('../controllers/fpoOperationsController');
+const { protect } = require('../middleware/authMiddleware');
+const { authorizeRoles } = require('../middleware/roleMiddleware');
+const { auditMiddleware } = require('../middleware/auditMiddleware');
+
+router.use(protect, auditMiddleware);
+router.get('/summary', authorizeRoles('fpo_admin', 'fpo_staff'), c.summary);
+router.get('/prices', authorizeRoles('fpo_admin', 'fpo_staff'), c.priceIntelligence);
+router.post('/assistant', authorizeRoles('fpo_admin', 'fpo_staff'), c.assistant);
+router.post('/procurement-plans', authorizeRoles('fpo_admin', 'fpo_staff'), c.createProcurementPlan);
+router.post('/buyer-demands', authorizeRoles('fpo_admin', 'fpo_staff'), c.createBuyerDemand);
+router.post('/shipments', authorizeRoles('fpo_admin', 'fpo_staff'), c.createShipment);
+router.patch('/shipments/:id', authorizeRoles('fpo_admin', 'fpo_staff'), c.updateShipment);
+router.get('/operations-catalog', authorizeRoles('fpo_admin', 'fpo_staff'), c.operationsCatalog);
+router.get('/documents/:type', authorizeRoles('fpo_admin', 'fpo_staff'), c.documentData);
+router.get('/admin/cbbo', authorizeRoles('admin'), c.adminCbbo);
+router.get('/admin/reconciliation', authorizeRoles('admin'), c.adminReconciliation);
+module.exports = router;

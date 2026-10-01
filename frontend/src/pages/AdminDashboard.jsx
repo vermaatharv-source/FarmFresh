@@ -5,6 +5,7 @@ import API from '../api/axios';
 import { useAuth } from '../context/AuthContext';
 import AuthorityOverview from '../components/dashboard/AuthorityOverview';
 import { AdminPaymentReport } from '../components/dashboard/PaymentReports';
+import CbboDashboard from '../components/dashboard/CbboDashboard';
 
 /**
  * Government / Authority portal (role: admin).
@@ -199,6 +200,8 @@ export default function AdminDashboard() {
         <AuthorityOverview fpos={fpos} summary={summary} onReview={openReview} />
 
         <AdminPaymentReport data={paymentData} loading={paymentLoading} error={paymentError} />
+
+        <CbboDashboard />
 
         <h2 className="text-base font-semibold text-slate-900 pt-2">All registered FPOs</h2>
 

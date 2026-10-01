@@ -63,6 +63,7 @@ const gradePriceRoutes = require('./routes/gradePriceRoutes');
 const reviewRoutes = require('./routes/reviewRoutes');
 const subscriptionRoutes = require('./routes/subscriptionRoutes');
 const securityRoutes = require('./routes/securityRoutes');
+const fpoOperationsRoutes = require('./routes/fpoOperationsRoutes');
 
 // Import eNAM sync service functions
 const { syncAgmarknetPrices, initPriceSyncScheduler } = require('./services/enamSyncService');
@@ -130,7 +131,8 @@ app.use('/api/reports', reportRoutes); // sales/farmer-performance/monthly/settl
 app.use('/api/grade-prices', gradePriceRoutes); // per-crop grade-based pricing configs used by batch grading
 app.use('/api/reviews', reviewRoutes); // Product Reviews & Ratings
 app.use('/api/subscriptions', subscriptionRoutes); // Recurring Subscriptions (Subscribe & Save)
-app.use('/api/security', securityRoutes); // Admin-only audit blockchain verification
+app.use('/api/security', securityRoutes);
+app.use('/api/fpo-operations', fpoOperationsRoutes); // Admin-only audit blockchain verification
 app.use('/api/translate', translateRoutes);
 // Health check endpoint
 app.get('/', (req, res) => {

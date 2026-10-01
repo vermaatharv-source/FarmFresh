@@ -1,13 +1,14 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const PaymentTransaction = require('../models/PaymentTransaction');
+const Payout = require('../models/Payout');
 const Fpo = require('../models/Fpo');
 const { protect } = require('../middleware/authMiddleware');
 const { authorizeRoles } = require('../middleware/roleMiddleware');
 
 const router = express.Router();
 
-// Platform (government admin) view: total platform fee collected.
+// Platform/admin view. This is intentionally separate from the FPO endpoint.
 router.get('/admin/platform-revenue', protect, authorizeRoles('admin'), async (req, res) => {
   try {
     const [t] = await PaymentTransaction.aggregate([
@@ -18,24 +19,65 @@ router.get('/admin/platform-revenue', protect, authorizeRoles('admin'), async (r
       .populate('fpo', 'name').select('transactionId fpo orderAmount platformFee fpoAmount totalCharged status createdAt');
     res.json({ totals: t || { platformFee: 0, fpoAmount: 0, orderAmount: 0, count: 0 }, recent });
   } catch (e) {
-    res.status(500).json({ message: e.message });
+    res.status(500).json({ message: 'Unable to load platform revenue.' });
   }
 });
 
-// FPO view: what has been credited to this FPO.
+// FPO view. Never return platformFee, platformFeePercent, totalCharged or
+// the admin-side payment split fields from this endpoint.
 router.get('/fpo/earnings', protect, authorizeRoles('fpo_admin', 'fpo_staff'), async (req, res) => {
   try {
     const userId = req.user._id || req.user.id;
-    const fpo = await Fpo.findOne({ $or: [{ adminUser: userId }, { staff: userId }] });
-    if (!fpo) return res.json({ totals: { fpoAmount: 0, platformFee: 0, count: 0 }, transactions: [] });
-    const [t] = await PaymentTransaction.aggregate([
-      { $match: { fpo: new mongoose.Types.ObjectId(String(fpo._id)), status: 'Success' } },
-      { $group: { _id: null, fpoAmount: { $sum: '$fpoAmount' }, platformFee: { $sum: '$platformFee' }, count: { $sum: 1 } } },
+    const fpo = await Fpo.findOne({ $or: [{ adminUser: userId }, { staff: userId }] }).select('_id name creditLineAvailable');
+    if (!fpo) {
+      return res.json({
+        totals: { fpoAmount: 0, count: 0 },
+        cashFlow: { moneyToReceive: 0, moneyToPay: 0, netPosition: 0, creditLimit: 0, creditUsed: 0, creditAvailable: 0, creditUtilizationPct: 0, pendingPayouts: 0 },
+        transactions: [],
+      });
+    }
+
+    const fpoObjectId = new mongoose.Types.ObjectId(String(fpo._id));
+    const [t, payouts] = await Promise.all([
+      PaymentTransaction.aggregate([
+        { $match: { fpo: fpoObjectId, status: { $in: ['Success', 'Refunded'] } } },
+        { $group: { _id: null, successfulFpoAmount: { $sum: { $cond: [{ $eq: ['$status', 'Success'] }, '$fpoAmount', 0] } }, refundedFpoAmount: { $sum: { $cond: [{ $eq: ['$status', 'Refunded'] }, '$fpoAmount', 0] } }, count: { $sum: 1 } } },
+      ]),
+      Payout.find({ fpo: fpo._id }).select('amount totalAmount fundedFrom status paymentDate paidAt createdAt').lean(),
     ]);
-    const transactions = await PaymentTransaction.find({ fpo: fpo._id }).sort({ createdAt: -1 }).limit(50);
-    res.json({ totals: t || { fpoAmount: 0, platformFee: 0, count: 0 }, transactions });
+
+    const totals = t?.[0] || { successfulFpoAmount: 0, refundedFpoAmount: 0, count: 0 };
+    const moneyToReceive = Math.max(0, Number(totals.successfulFpoAmount || 0) - Number(totals.refundedFpoAmount || 0));
+    const pending = payouts.filter((p) => p.status === 'Pending');
+    const moneyToPay = pending.reduce((sum, p) => sum + Number(p.amount ?? p.totalAmount ?? 0), 0);
+    const creditUsed = payouts
+      .filter((p) => p.fundedFrom === 'CREDIT_LINE' && ['Pending', 'Completed'].includes(p.status))
+      .reduce((sum, p) => sum + Number(p.amount ?? p.totalAmount ?? 0), 0);
+    const creditLimit = Number(fpo.creditLineAvailable || 0);
+    const creditAvailable = Math.max(0, creditLimit - creditUsed);
+
+    // Only FPO-safe fields are selected. In particular, no platform-fee field.
+    const transactions = await PaymentTransaction.find({ fpo: fpo._id })
+      .sort({ createdAt: -1 }).limit(50)
+      .select('transactionId order fpoAmount status createdAt');
+
+    res.json({
+      totals: { fpoAmount: Number(totals.successfulFpoAmount || 0) - Number(totals.refundedFpoAmount || 0), count: Number(totals.count || 0) },
+      cashFlow: {
+        moneyToReceive,
+        moneyToPay,
+        netPosition: moneyToReceive - moneyToPay,
+        creditLimit,
+        creditUsed,
+        creditAvailable,
+        creditUtilizationPct: creditLimit ? (creditUsed / creditLimit) * 100 : 0,
+        pendingPayouts: pending.length,
+      },
+      transactions,
+    });
   } catch (e) {
-    res.status(500).json({ message: e.message });
+    console.error('FPO earnings error:', e);
+    res.status(500).json({ message: 'Unable to load FPO earnings.' });
   }
 });
 
