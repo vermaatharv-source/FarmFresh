@@ -1,5 +1,7 @@
 const mongoose = require('mongoose');
 const Fpo = require('../models/Fpo');
+const { buildCashFlow } = require('../services/cashFlowService');
+const { complianceSnapshot } = require('../services/complianceService');
 const Farmer = require('../models/Farmer');
 const Batch = require('../models/Batch');
 const Inventory = require('../models/Inventory');
@@ -49,7 +51,8 @@ async function buildSummary(fpo) {
     ]);
 
     const successfulPayments = transactions.filter((t) => t.status === 'Success');
-    const moneyToReceive = round2(successfulPayments.reduce((s, t) => s + (t.fpoAmount || 0), 0) - transactions.filter((t) => t.status === 'Refunded').reduce((s, t) => s + (t.fpoAmount || 0), 0));
+    // A refunded payment is the same document flipped to 'Refunded', so the Success sum already excludes it.
+    const moneyToReceive = round2(successfulPayments.reduce((sum, t) => sum + (t.fpoAmount || 0), 0));
     const moneyToPay = round2(pendingPayouts.reduce((s, p) => s + (p.amount ?? p.totalAmount ?? 0), 0));
     const creditUsed = round2(completedPayouts.filter((p) => p.fundedFrom === 'CREDIT_LINE').reduce((s, p) => s + (p.amount ?? p.totalAmount ?? 0), 0) + pendingPayouts.filter((p) => p.fundedFrom === 'CREDIT_LINE').reduce((s, p) => s + (p.amount ?? p.totalAmount ?? 0), 0));
     const creditLimit = round2(fpo.creditLineAvailable || 0);
@@ -537,7 +540,63 @@ const OPERATIONS_CATALOG = [
     ],
     tips: 'A "Verified" KYC status qualifies your FPO for instant working capital credit lines and higher buyer visibility.',
   },
+  {
+    id: 'cash-flow-tracker',
+    title: 'How to Track Cash Flow & Working Capital',
+    category: 'Finance',
+    navTab: 'earnings',
+    keywords: ['cash flow', 'cashflow', 'working capital', 'cash position', 'owed to farmers', 'payables', 'receivables', 'aging', 'ageing', 'cod to collect', 'can we pay', 'enough cash', 'marketplace earnings', 'earnings'],
+    summary: 'See what the marketplace has earned, what you still owe farmers, and whether you can pay them on time.',
+    steps: [
+      'Click on "Marketplace Earnings" in the main navigation.',
+      'Read the alerts at the top. They flag farmer payments overdue by 15 or 30+ days and low cover.',
+      'Check the summary cards: marketplace earnings (after refunds), amount paid to farmers, net marketplace cash, amount owed to farmers and credit line headroom.',
+      'Use "Owed to farmers, by age" to see how old each unpaid graded batch is, then pay the oldest first from the "Payouts" tab.',
+      'In "Can you pay your farmers?", optionally type the cash in your bank account (it is not saved) to see whether you can cover everything owed.',
+      'Click "Refresh" to reload the latest figures.',
+    ],
+    tips: 'These figures come from your FarmFresh records only. Online payments are recorded in the FarmFresh ledger, so confirm them against your bank account.',
+  },
+  {
+    id: 'bank-ready-pack',
+    title: 'How to Download the Bank-Ready Data Pack',
+    category: 'Finance',
+    navTab: 'earnings',
+    keywords: ['bank pack', 'bank ready', 'bank-ready', 'data pack', 'loan pack', 'ledger csv', 'download ledger', 'cash ledger', 'financial summary', 'for the bank', 'for my ca', 'bank loan', 'credit officer'],
+    summary: 'Create a clean ledger and summary for a bank, your CA or your CBBO for any period.',
+    steps: [
+      'Click on "Marketplace Earnings" and scroll to "Bank-ready data pack".',
+      'Choose the period: this financial year, last financial year, last 6 or 12 months, or custom dates.',
+      'Click "Open printable report (PDF)", then use "Print / Save as PDF" in the new tab.',
+      'Or click "Download ledger (CSV for Excel)" for a dated list of every receipt, refund and farmer payout.',
+      'Share the file with your bank, CA or CBBO.',
+    ],
+    tips: 'Farmer names are left out and payees appear as member IDs. The pack says it is unaudited and not reconciled with bank statements, so keep your bank statements ready too.',
+  },
+  {
+    id: 'compliance-tracker',
+    title: 'How to Track Statutory & Governance Compliance',
+    category: 'Compliance',
+    navTab: 'completion',
+    keywords: ['compliance', 'compliance tracker', 'statutory compliance', 'compliance checklist', 'agm', 'annual general meeting', 'annual return', 'audit due', 'gst return', 'din kyc', 'director kyc', 'filing deadline', 'registrar', 'mca'],
+    summary: 'Keep track of audits, meetings, filings and licences so nothing that affects scheme eligibility or bank loans is missed.',
+    steps: [
+      'Click on "Compliance" in the main navigation. The tracker is at the top of the page.',
+      'FPO admins: click "Add the standard checklist" to add the common FPO tasks. They come without dates.',
+      'Ask your CA or Company Secretary for each due date, then set it with the date picker on the task. FarmFresh does not guess deadlines.',
+      'Update the status as you go: Pending, In progress, Completed or Not applicable. Use "Notes" for who is responsible or a filing reference.',
+      'Watch the Overdue and Due in 30 days counters, and use the filters to see what needs attention.',
+      'Use "Add your own task" for anything specific to your FPO.',
+    ],
+    tips: 'Staff can view the tracker but only the FPO admin can change it. Open compliance tasks also appear in the bank-ready data pack.',
+  },
 ];
+
+// The dashboard has no separate "trace" screen: batch QR passports are on the Intake & Grading tab.
+const TAB_ALIAS = { trace: 'intake' };
+const tabFor = (navTab) => TAB_ALIAS[navTab] || navTab;
+// The frontend reads `tabId`; the catalog stores `navTab`. Send both so "Open … Tab" always lands on a real tab.
+const publicOp = (op) => ({ ...op, tabId: tabFor(op.navTab) });
 
 const MATCH_STOPWORDS = new Set(['how', 'to', 'the', 'and', 'for', 'with', 'from', 'your', 'create', 'view', 'check', 'manage', 'update', 'record', 'process', 'generate', 'use', 'perform', 'track', 'log', 'open', 'verify', 'print', 'new', 'official', 'live']);
 const normalizeQuestion = (q) => String(q).toLowerCase().replace(/[^a-z0-9\s/]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -573,37 +632,117 @@ exports.assistant = async (req, res) => {
     if (!fpo) return res.status(404).json({ message: 'FPO profile not found.' });
 
     // 1. Check for live metric queries first
+    const isHowTo = /\bhow (to|do i|do we|can i|can we|should i|would i)\b/.test(question) || /^(steps|guide|explain|where)\b/.test(question);
+    const asksOwed =
+      (question.includes('how much') && (question.includes('owe') || question.includes('due') || (question.includes('pay') && /\b(farmer|farmers|payout|payouts|settle|settlement)\b/.test(question)))) ||
+      /\b(who|what) do we owe\b/.test(question) ||
+      /\bamount (owed|due)\b/.test(question);
+    const asksOverdue = !isHowTo && /\b(overdue|late|delayed|oldest|longest|older than)\b/.test(question) && /\b(farmer|farmers|payment|payments|payout|payouts|owed|owe)\b/.test(question);
+    const asksCover =
+      !isHowTo &&
+      (/\b(can|could|will) we (pay|afford|cover|settle)\b/.test(question) || /\benough (cash|money|funds)\b/.test(question) || /\bshortfall\b/.test(question) || /\bcash position\b/.test(question));
+    const asksCompliance =
+      !isHowTo &&
+      /\b(compliance|statutory|agm|annual return|din kyc)\b/.test(question) &&
+      /\b(overdue|due|pending|status|how many|which|any|upcoming|late|missed)\b/.test(question);
     const isLiveMetricsQuery =
-      (question.includes('how much') && (question.includes('owe') || question.includes('pay') || question.includes('due'))) ||
+      asksOwed ||
+      asksOverdue ||
+      asksCover ||
+      asksCompliance ||
       (question.includes('how much') && question.includes('receive')) ||
       (question.includes('what is') && (question.includes('inventory') || question.includes('stock') || question.includes('credit') || question.includes('profit'))) ||
       (question.startsWith('current ') && (question.includes('stock') || question.includes('inventory') || question.includes('credit')));
 
     let snapshotCache = null;
     const loadSnapshot = async () => (snapshotCache ||= await getAssistantSnapshot(fpo));
+    let cashCache = null;
+    const loadCash = async () => (cashCache ||= await buildCashFlow(fpo));
+    let complianceCache = null;
+    const loadCompliance = async () => (complianceCache ||= await complianceSnapshot(fpo._id));
+    const rupees = (n) => `₹${Math.round(Number(n) || 0).toLocaleString('en-IN')}`;
+
+    // Same definition as the Marketplace Earnings page: graded batches the FPO has not yet paid for.
+    const owedAnswer = async () => {
+      const [cash, snap] = await Promise.all([loadCash(), loadSnapshot()]);
+      const p = cash.payables;
+      let a;
+      if (!(p.total > 0)) {
+        a = 'You do not owe farmers anything right now: every graded batch has been paid.';
+      } else {
+        a = `You owe farmers ${rupees(p.total)} across ${p.count} graded batch${p.count === 1 ? '' : 'es'} that ${p.count === 1 ? 'has' : 'have'} not been paid yet.`;
+        if (p.overdue30 > 0) a += ` ${rupees(p.overdue30)} of this has been owed for more than 30 days.`;
+        else if (p.overdue15 > 0) a += ` ${rupees(p.overdue15)} of this has been owed for more than 15 days.`;
+        a += ' See "Marketplace Earnings" for the age breakdown and the "Payouts" tab to pay.';
+      }
+      if (snap.pendingPayouts.count > 0) {
+        a += ` Separately, ${snap.pendingPayouts.count} payout record(s) worth ${rupees(snap.pendingPayouts.amount)} are marked Pending.`;
+      }
+      return a;
+    };
 
     if (isLiveMetricsQuery) {
-      const snapshot = await loadSnapshot();
-      let liveAnswer = '';
-      if (question.includes('owe') || question.includes('pay') || question.includes('farmer') || question.includes('payout')) {
-        liveAnswer = `There are currently ${snapshot.pendingPayouts.count} pending farmer payout(s) totaling ₹${snapshot.pendingPayouts.amount.toFixed(2)}. Go to the "Payouts" tab to disburse funds.`;
-      } else if (question.includes('receive') || question.includes('receivable')) {
-        liveAnswer = `Recorded FPO money to receive is ₹${snapshot.moneyToReceive.toFixed(2)} from completed buyer transactions.`;
-      } else if (question.includes('inventory') || question.includes('stock')) {
-        liveAnswer = `Current warehouse inventory is ${snapshot.inventoryKg.toFixed(1)} kg. Approximately ${snapshot.aging5Plus.toFixed(1)} kg of intake is older than 5 days and should be prioritized for dispatch.`;
-      } else if (question.includes('credit')) {
-        liveAnswer = `Credit line used is ₹${snapshot.creditUsed.toFixed(2)} against your available limit of ₹${snapshot.creditLimit.toFixed(2)}.`;
-      } else if (question.includes('profit') || question.includes('contribution')) {
-        liveAnswer = `Estimated contribution before overhead is ₹${snapshot.contribution.toFixed(2)}.`;
-      }
+      try {
+        let liveAnswer = '';
+        if (asksCompliance) {
+          const comp = await loadCompliance();
+          const s = comp.summary;
+          if (!s.total) {
+            liveAnswer = 'No compliance tasks are set up yet. Open the "Compliance" tab and click "Add the standard checklist", then set each due date with your CA or Company Secretary.';
+          } else {
+            liveAnswer = `Compliance: ${s.overdue} overdue, ${s.dueSoon} due in the next 30 days, ${s.noDate} open with no due date set, ${s.completed} completed (of ${s.total} tasks).`;
+            const late = comp.open.filter((t) => t.isOverdue).slice(0, 3).map((t) => t.title);
+            if (late.length) liveAnswer += ` Overdue: ${late.join('; ')}.`;
+            liveAnswer += ' Due dates are entered by your team, so confirm them with your CA or Company Secretary.';
+          }
+        } else if (asksCover) {
+          const cash = await loadCash();
+          const pr = cash.projection;
+          if (!(pr.payables > 0)) {
+            liveAnswer = 'You do not owe farmers anything right now, so there is nothing to cover.';
+          } else {
+            const label = { healthy: 'healthy', tight: 'tight', shortfall: 'a shortfall' }[pr.status] || pr.status;
+            liveAnswer = `Cover check: ${label}. You owe farmers ${rupees(pr.payables)} and have ${rupees(pr.available)} available (marketplace cash ${rupees(pr.marketplaceCash)}, Cash on Delivery still to collect ${rupees(pr.codToCollect)}, unused credit line ${rupees(pr.creditHeadroom)}). `;
+            liveAnswer += pr.shortfall > 0 ? `You are ${rupees(pr.shortfall)} short. ` : 'You can cover everything currently owed. ';
+            liveAnswer += 'This uses marketplace data only and does not know your bank balance, so add your bank cash on the "Marketplace Earnings" page for a fuller picture.';
+          }
+        } else if (asksOverdue) {
+          const cash = await loadCash();
+          const p = cash.payables;
+          if (p.overdue15 > 0 || p.overdue30 > 0) {
+            liveAnswer = `${rupees(p.overdue30)} has been owed to farmers for more than 30 days and ${rupees(p.overdue15)} for more than 15 days (${p.buckets[3].count} batch${p.buckets[3].count === 1 ? '' : 'es'} over 30 days). Pay the oldest first from the "Payouts" tab.`;
+          } else {
+            liveAnswer = p.total > 0
+              ? `Nothing owed to farmers is older than 15 days. ${rupees(p.total)} is currently owed in total.`
+              : 'You do not owe farmers anything right now.';
+          }
+        } else if (asksOwed) {
+          liveAnswer = await owedAnswer();
+        } else if (question.includes('receive') || question.includes('receivable')) {
+          const snapshot = await loadSnapshot();
+          liveAnswer = `Recorded FPO money to receive is ₹${snapshot.moneyToReceive.toFixed(2)} from completed buyer transactions.`;
+        } else if (question.includes('inventory') || question.includes('stock')) {
+          const snapshot = await loadSnapshot();
+          liveAnswer = `Current warehouse inventory is ${snapshot.inventoryKg.toFixed(1)} kg. Approximately ${snapshot.aging5Plus.toFixed(1)} kg of intake is older than 5 days and should be prioritized for dispatch.`;
+        } else if (question.includes('credit')) {
+          const snapshot = await loadSnapshot();
+          liveAnswer = `Credit line used is ₹${snapshot.creditUsed.toFixed(2)} against your available limit of ₹${snapshot.creditLimit.toFixed(2)}.`;
+        } else if (question.includes('profit') || question.includes('contribution')) {
+          const snapshot = await loadSnapshot();
+          liveAnswer = `Estimated contribution before overhead is ₹${snapshot.contribution.toFixed(2)}.`;
+        }
 
-      if (liveAnswer) {
-        return res.json({
-          type: 'METRIC',
-          answer: liveAnswer,
-          generatedBy: 'FarmFresh Operations Assistant',
-          asOf: new Date().toISOString(),
-        });
+        if (liveAnswer) {
+          return res.json({
+            type: 'METRIC',
+            answer: liveAnswer,
+            generatedBy: 'FarmFresh Operations Assistant',
+            asOf: new Date().toISOString(),
+          });
+        }
+      } catch (liveErr) {
+        // A failed live lookup must not break the how-to guides below.
+        console.error('Operations Assistant live metric error:', liveErr);
       }
     }
 
@@ -616,7 +755,7 @@ exports.assistant = async (req, res) => {
 
       return res.json({
         type: 'OPERATION',
-        operation: matchedOp,
+        operation: publicOp(matchedOp),
         answer: fullAnswer,
         generatedBy: 'FarmFresh Operations Assistant',
         asOf: new Date().toISOString(),
@@ -624,29 +763,41 @@ exports.assistant = async (req, res) => {
     }
 
     // 3. Fallback to live snapshot helpers or general guidance
-    const snapshot = await loadSnapshot();
+    // If the data lookup fails here, still return the help list instead of an error.
+    let snapshot = null;
+    try {
+      snapshot = await loadSnapshot();
+    } catch (snapErr) {
+      console.error('Operations Assistant snapshot error:', snapErr);
+    }
+    const dataOk = Boolean(snapshot);
     let generalAnswer = '';
-    if (question.includes('pay') || question.includes('payout')) {
-      generalAnswer = `There are ${snapshot.pendingPayouts.count} pending farmer payouts totaling ₹${snapshot.pendingPayouts.amount.toFixed(2)}. Go to the "Payouts" tab to initiate settlements.`;
-    } else if (question.includes('receive') || question.includes('receivable')) {
+    if (dataOk && (question.includes('pay') || question.includes('payout'))) {
+      try {
+        generalAnswer = await owedAnswer();
+      } catch (owedErr) {
+        console.error('Operations Assistant owed-amount error:', owedErr);
+        generalAnswer = 'I could not load your payment figures right now. Open "Marketplace Earnings" or the "Payouts" tab to see them.';
+      }
+    } else if (dataOk && (question.includes('receive') || question.includes('receivable'))) {
       generalAnswer = `Recorded FPO money to receive is ₹${snapshot.moneyToReceive.toFixed(2)}.`;
-    } else if (question.includes('inventory') || question.includes('stock')) {
+    } else if (dataOk && (question.includes('inventory') || question.includes('stock'))) {
       generalAnswer = `Current inventory is ${snapshot.inventoryKg.toFixed(1)} kg. ${snapshot.aging5Plus.toFixed(1)} kg of intake is older than 5 days.`;
-    } else if (question.includes('credit')) {
+    } else if (dataOk && (question.includes('credit'))) {
       generalAnswer = `Credit-line usage is ₹${snapshot.creditUsed.toFixed(2)} against a limit of ₹${snapshot.creditLimit.toFixed(2)}.`;
-    } else if (question.includes('demand') || question.includes('forecast')) {
+    } else if (dataOk && (question.includes('demand') || question.includes('forecast'))) {
       generalAnswer = snapshot.forecast.length
         ? `The highest 7-day demand forecast is ${snapshot.forecast[0].produceType}: ~${snapshot.forecast[0].forecast7dKg.toFixed(1)} kg.`
         : 'There is not enough historical order data to produce a demand forecast yet.';
-    } else if (question.includes('quality') || question.includes('grade')) {
+    } else if (dataOk && (question.includes('quality') || question.includes('grade'))) {
       generalAnswer = snapshot.quality.length
         ? `The largest recorded produce stream is ${snapshot.quality[0].produceType}, with ${snapshot.quality[0].gradeAPct.toFixed(1)}% Grade-A output.`
         : 'No graded batch data is available yet.';
-    } else if (question.includes('reconcil') || question.includes('mismatch')) {
+    } else if (dataOk && (question.includes('reconcil') || question.includes('mismatch'))) {
       generalAnswer = snapshot.inventoryIssues
         ? `${snapshot.inventoryIssues} inventory line(s) need reconciliation against stock movements.`
         : 'Inventory lines currently reconcile within the configured 0.1 kg tolerance.';
-    } else if (question.includes('shipment') || question.includes('logistics')) {
+    } else if (dataOk && (question.includes('shipment') || question.includes('logistics'))) {
       generalAnswer = `${snapshot.shipmentsInTransit} shipment(s) are currently picked up or in transit.`;
     } else {
       generalAnswer = `I know every operation in FarmFresh software! You can ask me how to perform any task, such as:\n• "How to register a new farmer?"\n• "How to record intake and create batches?"\n• "How to grade produce?"\n• "How to create a marketplace listing?"\n• "How to fulfill and dispatch orders?"\n• "How to process farmer payouts?"\n• "How to create procurement plans & buyer demand?"\n• "How to create shipments?"\n• "How to check Mandi price intelligence?"\n• "How to generate and print PDF reports?"\n\nOr ask live questions like "How much do we owe farmers?" or "What is our current stock?"`;
@@ -655,7 +806,7 @@ exports.assistant = async (req, res) => {
     return res.json({
       type: 'GENERAL',
       answer: generalAnswer,
-      operationsList: OPERATIONS_CATALOG.map((o) => ({ id: o.id, title: o.title, category: o.category, navTab: o.navTab })),
+      operationsList: OPERATIONS_CATALOG.map((o) => ({ id: o.id, title: o.title, category: o.category, navTab: o.navTab, tabId: tabFor(o.navTab) })),
       generatedBy: 'FarmFresh Operations Assistant',
       asOf: new Date().toISOString(),
     });
@@ -667,7 +818,7 @@ exports.assistant = async (req, res) => {
 
 exports.operationsCatalog = async (req, res) => {
   try {
-    res.json({ operations: OPERATIONS_CATALOG });
+    res.json({ operations: OPERATIONS_CATALOG.map(publicOp) });
   } catch (e) {
     res.status(500).json({ message: 'Unable to load operations catalog.' });
   }

@@ -306,7 +306,7 @@ const OPERATIONS_GUIDE = [
     id: 'traceability-passport',
     title: 'How to View Consumer Traceability Passports',
     category: 'Consumer & Traceability',
-    tabId: 'trace',
+    tabId: 'intake',
     icon: '📱',
     summary: 'Verify farm origin, harvest date, cold-chain log, and quality score via digital QR passport.',
     steps: [
@@ -330,6 +330,56 @@ const OPERATIONS_GUIDE = [
       'Verify Bank Account Details for receiving buyer payments.',
     ],
     tips: 'A "Verified" KYC status unlocks instant working capital credit lines for farmer settlements.',
+  },
+  {
+    id: 'cash-flow-tracker',
+    title: 'How to Track Cash Flow & Working Capital',
+    category: 'Finance',
+    tabId: 'earnings',
+    icon: '💵',
+    summary: 'See what the marketplace has earned, what you still owe farmers, and whether you can pay them on time.',
+    steps: [
+      'Click on "Marketplace Earnings" in the main navigation.',
+      'Read the alerts at the top. They flag farmer payments overdue by 15 or 30+ days and low cover.',
+      'Check the summary cards: marketplace earnings (after refunds), amount paid to farmers, net marketplace cash, amount owed to farmers and credit line headroom.',
+      'Use "Owed to farmers, by age" to see how old each unpaid graded batch is, then pay the oldest first from the "Payouts" tab.',
+      'In "Can you pay your farmers?", optionally type the cash in your bank account (it is not saved) to see whether you can cover everything owed.',
+      'Click "Refresh" to reload the latest figures.',
+    ],
+    tips: 'These figures come from your FarmFresh records only. Online payments are recorded in the FarmFresh ledger, so confirm them against your bank account.',
+  },
+  {
+    id: 'bank-ready-pack',
+    title: 'How to Download the Bank-Ready Data Pack',
+    category: 'Finance',
+    tabId: 'earnings',
+    icon: '🏦',
+    summary: 'Create a clean ledger and summary for a bank, your CA or your CBBO for any period.',
+    steps: [
+      'Click on "Marketplace Earnings" and scroll to "Bank-ready data pack".',
+      'Choose the period: this financial year, last financial year, last 6 or 12 months, or custom dates.',
+      'Click "Open printable report (PDF)", then use "Print / Save as PDF" in the new tab.',
+      'Or click "Download ledger (CSV for Excel)" for a dated list of every receipt, refund and farmer payout.',
+      'Share the file with your bank, CA or CBBO.',
+    ],
+    tips: 'Farmer names are left out and payees appear as member IDs. The pack says it is unaudited and not reconciled with bank statements, so keep your bank statements ready too.',
+  },
+  {
+    id: 'compliance-tracker',
+    title: 'How to Track Statutory & Governance Compliance',
+    category: 'Compliance',
+    tabId: 'completion',
+    icon: '📋',
+    summary: 'Keep track of audits, meetings, filings and licences so nothing that affects scheme eligibility or bank loans is missed.',
+    steps: [
+      'Click on "Compliance" in the main navigation. The tracker is at the top of the page.',
+      'FPO admins: click "Add the standard checklist" to add the common FPO tasks. They come without dates.',
+      'Ask your CA or Company Secretary for each due date, then set it with the date picker on the task. FarmFresh does not guess deadlines.',
+      'Update the status as you go: Pending, In progress, Completed or Not applicable. Use "Notes" for who is responsible or a filing reference.',
+      'Watch the Overdue and Due in 30 days counters, and use the filters to see what needs attention.',
+      'Use "Add your own task" for anything specific to your FPO.',
+    ],
+    tips: 'Staff can view the tracker but only the FPO admin can change it. Open compliance tasks also appear in the bank-ready data pack.',
   },
 ];
 
@@ -469,6 +519,9 @@ export default function FpoOperationsCenter({ onNavigateTab }) {
       (op.id === 'demand-forecast' && (lowerQ.includes('forecast') || lowerQ.includes('predict'))) ||
       (op.id === 'stock-reconciliation' && (lowerQ.includes('reconcil') || lowerQ.includes('mismatch') || lowerQ.includes('audit stock'))) ||
       (op.id === 'pdf-documents' && (lowerQ.includes('pdf') || lowerQ.includes('document') || lowerQ.includes('print') || lowerQ.includes('statement') || lowerQ.includes('report'))) ||
+      (op.id === 'cash-flow-tracker' && (lowerQ.includes('cash flow') || lowerQ.includes('working capital') || lowerQ.includes('earnings') || lowerQ.includes('owed to farmers') || lowerQ.includes('can we pay'))) ||
+      (op.id === 'bank-ready-pack' && (lowerQ.includes('bank') || lowerQ.includes('ledger') || lowerQ.includes('data pack') || lowerQ.includes('loan'))) ||
+      (op.id === 'compliance-tracker' && (lowerQ.includes('compliance') || lowerQ.includes('agm') || lowerQ.includes('statutory') || lowerQ.includes('annual return') || lowerQ.includes('filing'))) ||
       (op.id === 'traceability-passport' && (lowerQ.includes('trace') || lowerQ.includes('qr') || lowerQ.includes('passport')))
     );
 
@@ -1419,6 +1472,8 @@ export default function FpoOperationsCenter({ onNavigateTab }) {
                     'How to process payouts?',
                     'How to create shipment?',
                     'How much do we owe farmers?',
+                    'Can we cover farmer payments?',
+                    'Any compliance tasks overdue?',
                     'How to print PDF report?',
                   ].map((chip) => (
                     <button

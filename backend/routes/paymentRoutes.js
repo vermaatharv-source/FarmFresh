@@ -5,6 +5,7 @@ const Payout = require('../models/Payout');
 const Fpo = require('../models/Fpo');
 const { protect } = require('../middleware/authMiddleware');
 const { authorizeRoles } = require('../middleware/roleMiddleware');
+const { buildCashFlow, buildBankPack } = require('../services/cashFlowService');
 
 const router = express.Router();
 
@@ -47,7 +48,8 @@ router.get('/fpo/earnings', protect, authorizeRoles('fpo_admin', 'fpo_staff'), a
     ]);
 
     const totals = t?.[0] || { successfulFpoAmount: 0, refundedFpoAmount: 0, count: 0 };
-    const moneyToReceive = Math.max(0, Number(totals.successfulFpoAmount || 0) - Number(totals.refundedFpoAmount || 0));
+    // A refunded payment is the same document flipped to 'Refunded', so the Success sum already excludes it.
+    const moneyToReceive = Math.max(0, Number(totals.successfulFpoAmount || 0));
     const pending = payouts.filter((p) => p.status === 'Pending');
     const moneyToPay = pending.reduce((sum, p) => sum + Number(p.amount ?? p.totalAmount ?? 0), 0);
     const creditUsed = payouts
@@ -62,7 +64,7 @@ router.get('/fpo/earnings', protect, authorizeRoles('fpo_admin', 'fpo_staff'), a
       .select('transactionId order fpoAmount status createdAt');
 
     res.json({
-      totals: { fpoAmount: Number(totals.successfulFpoAmount || 0) - Number(totals.refundedFpoAmount || 0), count: Number(totals.count || 0) },
+      totals: { fpoAmount: Number(totals.successfulFpoAmount || 0), count: Number(totals.count || 0) },
       cashFlow: {
         moneyToReceive,
         moneyToPay,
@@ -78,6 +80,35 @@ router.get('/fpo/earnings', protect, authorizeRoles('fpo_admin', 'fpo_staff'), a
   } catch (e) {
     console.error('FPO earnings error:', e);
     res.status(500).json({ message: 'Unable to load FPO earnings.' });
+  }
+});
+
+// FPO view: working-capital picture (payables aging, COD still to collect, credit line, 30-day cover check).
+router.get('/fpo/cash-flow', protect, authorizeRoles('fpo_admin', 'fpo_staff'), async (req, res) => {
+  try {
+    const userId = req.user._id || req.user.id;
+    const fpo = await Fpo.findOne({ $or: [{ adminUser: userId }, { staff: userId }] }).select('_id creditLineAvailable');
+    if (!fpo) return res.status(404).json({ message: 'FPO profile not found.' });
+    res.json(await buildCashFlow(fpo));
+  } catch (e) {
+    console.error('FPO cash-flow error:', e);
+    res.status(500).json({ message: 'Unable to load cash flow.' });
+  }
+});
+
+// FPO view: bank / CA / CBBO-ready pack (summary tables + chronological ledger) for a chosen period.
+// Optional query: ?from=YYYY-MM-DD&to=YYYY-MM-DD (defaults to the Indian financial year to date).
+router.get('/fpo/bank-pack', protect, authorizeRoles('fpo_admin', 'fpo_staff'), async (req, res) => {
+  try {
+    const userId = req.user._id || req.user.id;
+    const fpo = await Fpo.findOne({ $or: [{ adminUser: userId }, { staff: userId }] })
+      .select('name registrationType registrationNumber dateOfIncorporation gstin schemeName shareholderFarmerCount cbboName contactDetails creditLineAvailable');
+    if (!fpo) return res.status(404).json({ message: 'FPO profile not found.' });
+    res.json(await buildBankPack(fpo, req.query.from, req.query.to));
+  } catch (e) {
+    if (e && e.status === 400) return res.status(400).json({ message: e.message });
+    console.error('FPO bank-pack error:', e);
+    res.status(500).json({ message: 'Unable to build the bank-ready pack.' });
   }
 });
 

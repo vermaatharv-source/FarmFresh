@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import API from '../api/axios';
 import { useAuth } from '../context/AuthContext';
 import FpoCompletionPanel from '../components/FpoCompletionPanel';
+import ComplianceTracker from '../components/ComplianceTracker';
 import FpoOverview from '../components/dashboard/FpoOverview';
 import AutoTranslate from '../components/AutoTranslate';
 import LanguageSwitcher from '../components/LanguageSwitcher';
@@ -2035,15 +2036,18 @@ export default function FpoDashboard() {
 
             {/* COMPLIANCE */}
             {activeTab === 'completion' && (
-              <FpoCompletionPanel
-                profile={fpoProfile}
-                farmers={farmers}
-                batches={batches}
-                onRefresh={() => {
-                  loadProfile();
-                  loadAll();
-                }}
-              />
+              <div className="space-y-10">
+                <ComplianceTracker />
+                <FpoCompletionPanel
+                  profile={fpoProfile}
+                  farmers={farmers}
+                  batches={batches}
+                  onRefresh={() => {
+                    loadProfile();
+                    loadAll();
+                  }}
+                />
+              </div>
             )}
           </main>
         </div>
