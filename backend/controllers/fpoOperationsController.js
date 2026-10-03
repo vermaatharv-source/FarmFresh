@@ -32,11 +32,7 @@ function getAgingBucket(date) {
   return '5+ days';
 }
 
-exports.summary = async (req, res) => {
-  try {
-    const fpo = await getFpoId(req.user._id || req.user.id);
-    if (!fpo) return res.status(404).json({ message: 'FPO profile not found.' });
-
+async function buildSummary(fpo) {
     const fpoId = fpo._id;
     const [farmers, batches, inventory, pendingPayouts, completedPayouts, transactions, orders, shipments, demands, plans, movements] = await Promise.all([
       Farmer.find({ fpo: fpoId }).select('name village district state cropsGrown landHoldingAcres isActive isVerified totalEarnedLifetime createdAt'),
@@ -121,19 +117,47 @@ exports.summary = async (req, res) => {
     const overdueTasks = 0;
     const reconciliation = await buildReconciliation(fpoId, inventory, movements, batches, orders, pendingPayouts);
 
-    res.json({
+    return {
       fpo: { id: fpo._id, name: fpo.name, cbboName: fpo.cbboName, schemeName: fpo.schemeName || '', creditLineAvailable: creditLimit, kycStatus: fpo.kycStatus },
       cashFlow: { moneyToReceive, moneyToPay, netPosition: round2(moneyToReceive - moneyToPay), creditLimit, creditUsed, creditAvailable: round2(Math.max(0, creditLimit - creditUsed)), creditUtilizationPct: round1(creditLimit ? (creditUsed / creditLimit) * 100 : 0), pendingPayouts: pendingPayouts.length },
       commandCenter: { farmers: farmers.length, activeFarmers: farmers.filter((x) => x.isActive).length, batches: batches.length, inventoryKg: inventoryTotal, reservedKg: inventoryReserved, soldKg: inventorySold, orders: orders.length, pendingOrders: orders.filter((o) => ['Placed', 'Accepted', 'Packed'].includes(o.status)).length, shipmentsInTransit: shipments.filter((s) => ['PICKED_UP', 'IN_TRANSIT'].includes(s.status)).length, inventoryAging: aging },
       profitability: { estimatedContributionBeforeOverhead: round2(estimatedContribution), methodology: 'FPO share minus estimated farmer procurement cost and recorded shipment cost; overheads are not included.' },
       quality, geographicClusters, demandForecast: forecast, procurementPlans: plans, buyerDemands: demands, shipments, reconciliation,
       alerts: buildAlerts({ pendingPayouts, aging, creditLimit, creditUsed, reconciliation, orders, shipments }),
-    });
+    };
+}
+
+exports.summary = async (req, res) => {
+  try {
+    const fpo = await getFpoId(req.user._id || req.user.id);
+    if (!fpo) return res.status(404).json({ message: 'FPO profile not found.' });
+    res.json(await buildSummary(fpo));
   } catch (e) {
     console.error('FPO operations summary error:', e);
     res.status(500).json({ message: 'Unable to load FPO operations dashboard.' });
   }
 };
+
+// Flat set of live numbers the Operations Assistant answers from.
+// Built on the same calculation as the dashboard summary, so the chatbot and the dashboard never disagree.
+async function getAssistantSnapshot(fpo) {
+  const sum = await buildSummary(fpo);
+  const cf = sum.cashFlow || {};
+  const cc = sum.commandCenter || {};
+  return {
+    pendingPayouts: { count: Number(cf.pendingPayouts) || 0, amount: Number(cf.moneyToPay) || 0 },
+    moneyToReceive: Number(cf.moneyToReceive) || 0,
+    inventoryKg: Number(cc.inventoryKg) || 0,
+    aging5Plus: Number(cc.inventoryAging?.['5+ days']) || 0,
+    creditUsed: Number(cf.creditUsed) || 0,
+    creditLimit: Number(cf.creditLimit) || 0,
+    contribution: Number(sum.profitability?.estimatedContributionBeforeOverhead) || 0,
+    forecast: sum.demandForecast || [],
+    quality: sum.quality || [],
+    inventoryIssues: Number(sum.reconciliation?.inventoryIssues) || 0,
+    shipmentsInTransit: Number(cc.shipmentsInTransit) || 0,
+  };
+}
 
 async function buildReconciliation(fpoId, inventory, movements, batches, orders, pendingPayouts) {
   const movementNet = {};
@@ -515,6 +539,31 @@ const OPERATIONS_CATALOG = [
   },
 ];
 
+const MATCH_STOPWORDS = new Set(['how', 'to', 'the', 'and', 'for', 'with', 'from', 'your', 'create', 'view', 'check', 'manage', 'update', 'record', 'process', 'generate', 'use', 'perform', 'track', 'log', 'open', 'verify', 'print', 'new', 'official', 'live']);
+const normalizeQuestion = (q) => String(q).toLowerCase().replace(/[^a-z0-9\s/]/g, ' ').replace(/\s+/g, ' ').trim();
+
+// Picks the single best guide. A keyword phrase is a strong signal (longer phrase = stronger);
+// title words only break ties, and generic verbs like "create" never decide the match on their own.
+function findOperation(rawQuestion) {
+  const q = ` ${normalizeQuestion(rawQuestion)} `;
+  let best = null;
+  let bestScore = 0;
+  for (const op of OPERATIONS_CATALOG) {
+    let score = 0;
+    for (const kw of op.keywords) {
+      const k = normalizeQuestion(kw);
+      if (k && q.includes(` ${k} `)) score += 10 + k.length;
+      else if (k && q.includes(k)) score += 4 + Math.floor(k.length / 2);
+    }
+    if (q.includes(` ${op.id.replace(/-/g, ' ')} `)) score += 12;
+    for (const w of normalizeQuestion(op.title).split(' ')) {
+      if (w.length > 3 && !MATCH_STOPWORDS.has(w) && q.includes(` ${w}`)) score += 2;
+    }
+    if (score > bestScore) { best = op; bestScore = score; }
+  }
+  return bestScore >= 6 ? best : null;
+}
+
 exports.assistant = async (req, res) => {
   try {
     const rawQuestion = String(req.body?.question || '').trim();
@@ -530,16 +579,18 @@ exports.assistant = async (req, res) => {
       (question.includes('what is') && (question.includes('inventory') || question.includes('stock') || question.includes('credit') || question.includes('profit'))) ||
       (question.startsWith('current ') && (question.includes('stock') || question.includes('inventory') || question.includes('credit')));
 
-    const snapshot = await getAssistantSnapshot(fpo._id);
+    let snapshotCache = null;
+    const loadSnapshot = async () => (snapshotCache ||= await getAssistantSnapshot(fpo));
 
     if (isLiveMetricsQuery) {
+      const snapshot = await loadSnapshot();
       let liveAnswer = '';
       if (question.includes('owe') || question.includes('pay') || question.includes('farmer') || question.includes('payout')) {
         liveAnswer = `There are currently ${snapshot.pendingPayouts.count} pending farmer payout(s) totaling ₹${snapshot.pendingPayouts.amount.toFixed(2)}. Go to the "Payouts" tab to disburse funds.`;
       } else if (question.includes('receive') || question.includes('receivable')) {
         liveAnswer = `Recorded FPO money to receive is ₹${snapshot.moneyToReceive.toFixed(2)} from completed buyer transactions.`;
       } else if (question.includes('inventory') || question.includes('stock')) {
-        liveAnswer = `Current warehouse inventory is ${snapshot.inventoryKg.toFixed(1)} kg. Approximately ${snapshot.aging5Plus.toFixed(1)} kg is older than 5 days and should be prioritized for dispatch.`;
+        liveAnswer = `Current warehouse inventory is ${snapshot.inventoryKg.toFixed(1)} kg. Approximately ${snapshot.aging5Plus.toFixed(1)} kg of intake is older than 5 days and should be prioritized for dispatch.`;
       } else if (question.includes('credit')) {
         liveAnswer = `Credit line used is ₹${snapshot.creditUsed.toFixed(2)} against your available limit of ₹${snapshot.creditLimit.toFixed(2)}.`;
       } else if (question.includes('profit') || question.includes('contribution')) {
@@ -557,13 +608,7 @@ exports.assistant = async (req, res) => {
     }
 
     // 2. Match against Software Operations Knowledge Catalog
-    const matchedOp = OPERATIONS_CATALOG.find((op) => {
-      return (
-        op.keywords.some((kw) => question.includes(kw)) ||
-        question.includes(op.id) ||
-        op.title.toLowerCase().split(' ').some((word) => word.length > 3 && question.includes(word))
-      );
-    });
+    const matchedOp = findOperation(question);
 
     if (matchedOp) {
       const formattedSteps = matchedOp.steps.map((s, idx) => `${idx + 1}. ${s}`).join('\n');
@@ -579,13 +624,14 @@ exports.assistant = async (req, res) => {
     }
 
     // 3. Fallback to live snapshot helpers or general guidance
+    const snapshot = await loadSnapshot();
     let generalAnswer = '';
     if (question.includes('pay') || question.includes('payout')) {
       generalAnswer = `There are ${snapshot.pendingPayouts.count} pending farmer payouts totaling ₹${snapshot.pendingPayouts.amount.toFixed(2)}. Go to the "Payouts" tab to initiate settlements.`;
     } else if (question.includes('receive') || question.includes('receivable')) {
       generalAnswer = `Recorded FPO money to receive is ₹${snapshot.moneyToReceive.toFixed(2)}.`;
     } else if (question.includes('inventory') || question.includes('stock')) {
-      generalAnswer = `Current inventory is ${snapshot.inventoryKg.toFixed(1)} kg. ${snapshot.aging5Plus.toFixed(1)} kg is older than 5 days.`;
+      generalAnswer = `Current inventory is ${snapshot.inventoryKg.toFixed(1)} kg. ${snapshot.aging5Plus.toFixed(1)} kg of intake is older than 5 days.`;
     } else if (question.includes('credit')) {
       generalAnswer = `Credit-line usage is ₹${snapshot.creditUsed.toFixed(2)} against a limit of ₹${snapshot.creditLimit.toFixed(2)}.`;
     } else if (question.includes('demand') || question.includes('forecast')) {
