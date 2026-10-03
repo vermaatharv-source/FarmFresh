@@ -6,6 +6,7 @@ const Fpo = require('../models/Fpo'); // 1. Require Fpo model
 const { protect } = require('../middleware/authMiddleware');
 const { validateFpoDetails } = require('../utils/fpoValidation');
 const { normalizeEmail, isValidEmail, passwordProblem } = require('../utils/authValidation');
+const growthService = require('../services/growthService');
 
 const router = express.Router();
 
@@ -78,6 +79,18 @@ router.post('/register', async (req, res) => {
       location: location.trim(),
       consentAcceptedAt: new Date(),
     });
+
+    // ===== GROWTH LAYER: referral + personal referral code =====
+    try {
+      const referralCode = (req.body.referralCode || req.query.ref || '').toString().trim();
+      if (referralCode && signupRole === 'consumer') {
+        await growthService.applyReferralOnSignup(user._id, referralCode);
+      }
+      // Every new user gets their own shareable referral code
+      await growthService.ensureUserHasReferralCode(user._id);
+    } catch (growthErr) {
+      console.warn('[growth] referral on signup failed (non-fatal):', growthErr.message);
+    }
 
     // 2. Automatically create FPO profile document if registering as FPO Admin
     if (user.role === 'fpo_admin') {

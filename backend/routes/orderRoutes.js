@@ -7,6 +7,7 @@ const { protect } = require('../middleware/authMiddleware');
 const { notifyUser } = require('../utils/notify');
 const { recordOrderPayment } = require('../services/paymentService');
 const { calculateSplit, round2 } = require('../config/platformFee');
+const growthService = require('../services/growthService');
 
 const router = express.Router();
 
@@ -17,39 +18,38 @@ router.get('/platform-fee', (req, res) => {
   res.json({ percent });
 });
 
-// Validate coupon endpoint
-router.post('/validate-coupon', protect, (req, res) => {
-  const { couponCode, subtotal = 0 } = req.body;
-  const code = String(couponCode || '').trim().toUpperCase();
+// Validate coupon endpoint – uses real Coupon model + growth rules
+router.post('/validate-coupon', protect, async (req, res) => {
+  try {
+    const { couponCode, subtotal = 0, produceTypes = [], city } = req.body;
+    const code = String(couponCode || '').trim();
+    if (!code) {
+      return res.status(400).json({ message: 'Coupon code is required.', valid: false });
+    }
 
-  const coupons = {
-    FRESH10: { type: 'PERCENT', value: 10, maxDiscount: 150, minOrder: 100, desc: '10% off up to ₹150' },
-    WELCOME50: { type: 'FLAT', value: 50, minOrder: 200, desc: 'Flat ₹50 off on orders ₹200+' },
-    KISANFEST: { type: 'PERCENT', value: 15, maxDiscount: 200, minOrder: 300, desc: '15% off up to ₹200 on fresh harvest' },
-  };
+    const result = await growthService.validateAndApplyCoupon(
+      code,
+      req.user.id || req.user._id,
+      Number(subtotal) || 0,
+      produceTypes,
+      city
+    );
 
-  const coupon = coupons[code];
-  if (!coupon) {
-    return res.status(400).json({ message: 'Invalid or expired coupon code.' });
+    if (!result.valid) {
+      return res.status(400).json({ message: result.message, valid: false });
+    }
+
+    res.json({
+      valid: true,
+      code: result.coupon.code,
+      discount: result.discount,
+      description: result.coupon.description || result.message,
+      discountType: result.coupon.discountType,
+    });
+  } catch (err) {
+    console.error('[coupon]', err);
+    res.status(500).json({ message: err.message, valid: false });
   }
-
-  if (subtotal < coupon.minOrder) {
-    return res.status(400).json({ message: `Coupon requires a minimum order of ₹${coupon.minOrder}.` });
-  }
-
-  let discount = 0;
-  if (coupon.type === 'PERCENT') {
-    discount = Math.min(coupon.maxDiscount, Math.round((subtotal * coupon.value) / 100));
-  } else if (coupon.type === 'FLAT') {
-    discount = Math.min(subtotal, coupon.value);
-  }
-
-  res.json({
-    valid: true,
-    code,
-    discount,
-    description: coupon.desc,
-  });
 });
 
 // Unified multi-item checkout endpoint (FPO listings only)
@@ -188,6 +188,19 @@ router.post('/checkout', protect, async (req, res) => {
     return res.status(status).json({ message: err.message });
   } finally {
     await session.endSession();
+  }
+
+  // ===== GROWTH LAYER: first-order referral reward + coupon usage =====
+  if (orderSummary.orders.length > 0) {
+    try {
+      const firstOrderId = orderSummary.orders[0].id;
+      await growthService.processReferralRewardOnFirstOrder(firstOrderId);
+      if (couponCode) {
+        await growthService.incrementCouponUsage(couponCode);
+      }
+    } catch (growthErr) {
+      console.warn('[growth] post-checkout reward failed (non-fatal):', growthErr.message);
+    }
   }
 
   if (orderSummary.orders.length > 0) {

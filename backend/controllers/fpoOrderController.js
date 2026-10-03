@@ -12,6 +12,7 @@ const { notify, notifyUser } = require('../utils/notify');
 const { recordOrderPayment, recordRefund } = require('../services/paymentService');
 const { generateTransactionId } = require('../utils/idGenerator');
 const { round2 } = require('../config/platformFee');
+const growthService = require('../services/growthService');
 
 const getFpoId = async (userId) => {
   const f = await Fpo.findOne({ $or: [{ adminUser: userId }, { staff: userId }] });
@@ -200,6 +201,12 @@ exports.updateOrderStatus = async (req, res) => {
     } else if (order.status === 'Delivered') {
       notificationType = 'OrderDelivered';
       consumerMsg = `Order #${orderShortId} has been delivered safely! Please rate your produce freshness.`;
+      // Growth: process referral reward if this was the consumer's first order
+      try {
+        await growthService.processReferralRewardOnFirstOrder(order._id);
+      } catch (e) {
+        console.warn('[growth] Delivered reward hook:', e.message);
+      }
     } else if (order.status === 'Rejected') {
       notificationType = 'OrderCancelled';
       consumerMsg = `Order #${orderShortId} could not be fulfilled: ${order.rejectionReason || 'Produce unavailable'}.`;

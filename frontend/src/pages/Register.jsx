@@ -1,17 +1,19 @@
-import { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import API from '../api/axios';
 import { useAuth } from '../context/AuthContext';
 import BrandLogo from '../components/BrandLogo';
 
 function Register() {
+  const [searchParams] = useSearchParams();
   const [formData, setFormData] = useState({
     name: '',
     email: '',
     phone: '',
     password: '',
     role: 'consumer',
-    location: ''
+    location: '',
+    referralCode: searchParams.get('ref') || ''
   });
   const [fpoDetails, setFpoDetails] = useState({
     name: '',
@@ -44,7 +46,7 @@ function Register() {
     setError('');
     setLoading(true);
     try {
-      const base = { ...formData, acceptTerms };
+      const base = { ...formData, acceptTerms, referralCode: formData.referralCode || searchParams.get('ref') || '' };
       const payload = formData.role === 'fpo_admin' ? { ...base, fpoDetails } : base;
       const res = await API.post('/auth/register', payload);
       login(res.data.user, res.data.token);

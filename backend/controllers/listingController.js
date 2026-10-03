@@ -3,6 +3,7 @@ const Listing = require('../models/Listing');
 const Inventory = require('../models/Inventory');
 const StockMovement = require('../models/StockMovement');
 const Batch = require('../models/Batch');
+const geoService = require('../services/geoService');
 
 const getFpoId = async (userId) => {
   const f = await Fpo.findOne({ $or: [{ adminUser: userId }, { staff: userId }] });
@@ -35,7 +36,8 @@ exports.createListing = async (req, res) => {
 
     const images = req.files?.map((x) => x.path) || [];
 
-    const listing = await Listing.create({
+    const fpoDoc = await Fpo.findById(f);
+    const listing = new Listing({
       fpo: f,
       produceType,
       grade,
@@ -48,6 +50,8 @@ exports.createListing = async (req, res) => {
       sourceIntakeId: sourceBatch || undefined,
       status: 'Draft',
     });
+    geoService.applyFpoOrigin(listing, fpoDoc);
+    await listing.save();
 
     inv.reservedQuantity += qty;
     await inv.save();
@@ -168,6 +172,10 @@ exports.setListingStatus = async (req, res) => {
       return res.status(400).json({ message: 'Invalid status.' });
     }
     listing.status = status;
+    if (status === 'Published') {
+      // make sure the listing carries its FPO's location so buyers see distance
+      geoService.applyFpoOrigin(listing, await Fpo.findById(f));
+    }
     await listing.save();
     res.json(listing);
   } catch (e) {

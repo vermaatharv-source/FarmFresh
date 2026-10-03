@@ -13,6 +13,10 @@ import InvoiceModal from '../components/InvoiceModal';
 import TraceabilityModal from '../components/TraceabilityModal';
 import HelpSupportModal from '../components/HelpSupportModal';
 import BrandLogo from '../components/BrandLogo';
+import ReferralButton from '../components/consumer/ReferralButton';
+import LocationButton from '../components/consumer/LocationButton';
+import ShareListingButton from '../components/consumer/ShareListingButton';
+import WalletBadge from '../components/consumer/WalletBadge';
 
 export default function ConsumerDashboard() {
   const { user, logout, updateUser } = useAuth();
@@ -36,6 +40,11 @@ export default function ConsumerDashboard() {
   const [gradeFilter, setGradeFilter] = useState('ALL');
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('newest');
+  const [userLoc, setUserLoc] = useState(() => {
+    const lat = parseFloat(localStorage.getItem('ff_user_lat'));
+    const lng = parseFloat(localStorage.getItem('ff_user_lng'));
+    return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
+  });
 
   const [tab, setTab] = useState('fpoMarket');
   const [trackingOrder, setTrackingOrder] = useState(null);
@@ -246,18 +255,38 @@ export default function ConsumerDashboard() {
   };
 
   const fetchFpoListings = useCallback(async () => {
-    try {
-      const params = new URLSearchParams();
-      if (gradeFilter !== 'ALL') params.append('grade', gradeFilter);
-      if (searchQuery.trim()) params.append('search', searchQuery.trim());
-      if (sortBy) params.append('sort', sortBy);
+    const params = new URLSearchParams();
+    if (gradeFilter !== 'ALL') params.append('grade', gradeFilter);
+    if (sortBy) params.append('sort', sortBy);
 
-      const res = await API.get(`/listings/public?${params.toString()}`);
-      setFpoListings(res.data);
+    const loadPublic = async () => {
+      const p = new URLSearchParams(params);
+      if (searchQuery.trim()) p.append('search', searchQuery.trim());
+      if (p.get('sort') === 'nearest') p.set('sort', 'newest');
+      const res = await API.get(`/listings/public?${p.toString()}`);
+      setFpoListings(Array.isArray(res.data) ? res.data : res.data?.data || []);
+    };
+
+    try {
+      if (userLoc) {
+        // Location shared: same listings as everyone, each with distanceKm. Nothing is hidden by distance.
+        try {
+          const p = new URLSearchParams(params);
+          if (searchQuery.trim()) p.append('produceType', searchQuery.trim());
+          p.append('lat', userLoc.lat);
+          p.append('lng', userLoc.lng);
+          const res = await API.get(`/growth/listings/nearby?${p.toString()}`);
+          setFpoListings(res.data?.data || []);
+          return;
+        } catch (e) {
+          console.error('Nearby failed, falling back to all listings', e);
+        }
+      }
+      await loadPublic();
     } catch (err) {
       console.error('Failed to load FPO listings', err);
     }
-  }, [gradeFilter, searchQuery, sortBy]);
+  }, [gradeFilter, searchQuery, sortBy, userLoc]);
 
   const fetchFpoOrders = async () => {
     try {
@@ -415,6 +444,14 @@ export default function ConsumerDashboard() {
       setError(`Minimum order quantity is ${listing.minOrderQtyKg}kg`);
       return;
     }
+    if (
+      listing.outsideDeliveryArea &&
+      !window.confirm(
+        `You are about ${listing.distanceKm} km from this FPO, beyond its usual ${listing.deliveryRadiusKm} km delivery area. Delivery may take longer or may not be possible. Place the order anyway?`
+      )
+    ) {
+      return;
+    }
     try {
       await API.post('/fpo-orders', {
         listingId: listing._id,
@@ -457,32 +494,37 @@ export default function ConsumerDashboard() {
     Custom: 'bg-slate-600 text-white',
   };
 
+  const hdrBase =
+    'text-xs sm:text-sm font-medium inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg border transition';
+  const hdrIdle = `${hdrBase} border-slate-200 bg-white hover:bg-slate-50 text-slate-700`;
+  const hdrOn = `${hdrBase} bg-emerald-700 border-emerald-700 text-white`;
+  const marketCount = fpoListings.length;
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-lime-100 via-emerald-50 to-teal-100 relative overflow-hidden">
-      <div
-        className="absolute inset-0 opacity-60 pointer-events-none"
-        style={{
-          backgroundImage: 'radial-gradient(circle at 1px 1px, rgb(21 128 61 / 0.25) 1.5px, transparent 0)',
-          backgroundSize: '28px 28px',
-        }}
-      />
-      <div className="absolute -top-32 -right-32 w-[30rem] h-[30rem] bg-yellow-300 rounded-full blur-3xl opacity-40 pointer-events-none" />
-      <div className="absolute top-1/3 -left-32 w-[28rem] h-[28rem] bg-emerald-300 rounded-full blur-3xl opacity-30 pointer-events-none" />
+    <div className="min-h-screen bg-[#f3f6f1] relative">
 
       {/* Header */}
-      <header className="relative z-[200] bg-white/80 backdrop-blur border-b border-emerald-100 sticky top-0">
+      <header className="relative z-[200] bg-white/95 backdrop-blur border-b border-slate-200 sticky top-0">
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <BrandLogo size="sm" />
           </div>
-          <div className="flex items-center gap-2 sm:gap-3">
-            {/* Notifications Hub */}
+          <div className="flex items-center gap-1.5 sm:gap-2">
+            <LocationButton
+              located={!!userLoc}
+              onLocationSet={(loc) => {
+                setUserLoc(loc);
+                setSortBy('nearest');
+              }}
+            />
+            <ReferralButton />
+            <WalletBadge />
             <NotificationBell onSelectOrder={handleNotificationSelectOrder} />
 
             {/* Produce Traceability Passport Modal Trigger */}
             <button
               onClick={() => setIsTraceOpen(true)}
-              className="text-xs sm:text-sm font-medium flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg border bg-teal-50 hover:bg-teal-100 text-teal-800 border-teal-200 transition"
+              className={hdrIdle}
               title="Trace Farm Origin & Quality Passport"
             >
               <span>🌱</span>
@@ -492,7 +534,7 @@ export default function ConsumerDashboard() {
             {/* Help & Support Modal Trigger */}
             <button
               onClick={() => setIsHelpOpen(true)}
-              className="text-xs sm:text-sm font-medium flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg border bg-gray-50 hover:bg-gray-100 text-gray-700 border-gray-200 transition"
+              className={hdrIdle}
               title="Help & Customer Support"
             >
               <span>💬</span>
@@ -501,11 +543,7 @@ export default function ConsumerDashboard() {
 
             <button
               onClick={() => setTab('wishlist')}
-              className={`text-xs sm:text-sm font-medium flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg border transition ${
-                tab === 'wishlist'
-                  ? 'bg-rose-600 text-white border-rose-600'
-                  : 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200'
-              }`}
+              className={tab === 'wishlist' ? `${hdrBase} bg-rose-600 border-rose-600 text-white` : hdrIdle}
             >
               <span>❤️</span>
               <span className="hidden sm:inline">Wishlist</span>
@@ -518,7 +556,7 @@ export default function ConsumerDashboard() {
 
             <button
               onClick={() => setIsCartOpen(true)}
-              className="text-xs sm:text-sm font-medium flex items-center gap-1.5 px-3 py-1.5 rounded-lg border bg-emerald-700 hover:bg-emerald-800 text-white border-emerald-700 transition shadow-sm"
+              className={`${hdrOn} hover:bg-emerald-800`}
             >
               <span>🛒</span>
               <span className="hidden sm:inline">Cart</span>
@@ -531,11 +569,7 @@ export default function ConsumerDashboard() {
 
             <button
               onClick={() => setTab('account')}
-              className={`text-xs sm:text-sm font-medium flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg border transition ${
-                tab === 'account'
-                  ? 'bg-emerald-700 text-white border-emerald-700'
-                  : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200'
-              }`}
+              className={tab === 'account' ? hdrOn : hdrIdle}
             >
               <span>👤</span>
               <span className="hidden sm:inline">{user?.name}</span>
@@ -543,7 +577,7 @@ export default function ConsumerDashboard() {
 
             <button
               onClick={handleLogout}
-              className="text-xs sm:text-sm bg-gray-700 text-white px-3 py-1.5 rounded-lg hover:bg-gray-800 transition font-medium"
+              className="text-xs sm:text-sm text-slate-500 hover:text-slate-900 px-2 py-1.5 font-medium transition"
             >
               Logout
             </button>
@@ -566,212 +600,311 @@ export default function ConsumerDashboard() {
         )}
 
         {/* Tabs */}
-        <div className="flex flex-wrap gap-2 mb-6">
+        <nav className="flex gap-1 mb-6 overflow-x-auto border-b border-slate-200" aria-label="Sections">
           {[
             { id: 'fpoMarket', label: 'FPO Marketplace' },
-            { id: 'fpoOrders', label: `FPO Orders${fpoOrders.length ? ` (${fpoOrders.length})` : ''}` },
-            { id: 'subscriptions', label: `Subscriptions${subscriptions.length ? ` (${subscriptions.length})` : ''}` },
-            { id: 'wishlist', label: `Wishlist${wishlist.length ? ` (${wishlist.length})` : ''}` },
+            { id: 'fpoOrders', label: 'FPO Orders', count: fpoOrders.length },
+            { id: 'subscriptions', label: 'Subscriptions', count: subscriptions.length },
+            { id: 'wishlist', label: 'Wishlist', count: wishlist.length },
             { id: 'account', label: 'My Account' },
-          ].map((t) => (
+          ].map((tb) => (
             <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
-              className={`px-5 py-2 rounded-md text-sm font-medium transition ${
-                tab === t.id
-                  ? 'bg-emerald-700 text-white shadow'
-                  : 'bg-white text-gray-600 hover:bg-emerald-50 border'
+              key={tb.id}
+              onClick={() => setTab(tb.id)}
+              className={`whitespace-nowrap -mb-px px-4 py-2.5 text-sm font-semibold border-b-2 transition flex items-center gap-1.5 ${
+                tab === tb.id
+                  ? 'border-emerald-700 text-emerald-800'
+                  : 'border-transparent text-slate-500 hover:text-slate-800'
               }`}
             >
-              {t.label}
+              {tb.label}
+              {tb.count > 0 && (
+                <span
+                  className={`text-[11px] font-bold px-1.5 py-0.5 rounded-full ${
+                    tab === tb.id ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'
+                  }`}
+                >
+                  {tb.count}
+                </span>
+              )}
             </button>
           ))}
-        </div>
+        </nav>
 
         {/* ==================== FPO MARKETPLACE ==================== */}
         {tab === 'fpoMarket' && (
           <div>
-            {/* Filters Bar */}
-            <div className="bg-white rounded-xl shadow-sm border p-4 mb-5 space-y-4">
-              <div className="flex flex-col sm:flex-row gap-3">
+            {/* Hero + search */}
+            <section className="rounded-2xl bg-emerald-900 text-white p-5 sm:p-7 mb-4">
+              <h1 className="font-display text-2xl sm:text-3xl font-semibold leading-tight max-w-xl">
+                Fresh produce, straight from farmer groups
+              </h1>
+              <p className="text-sm text-emerald-100/85 mt-1.5 max-w-xl">
+                Every listing is graded, traced to its farm and sold by a verified FPO.
+              </p>
+
+              <div className="mt-4 flex items-center bg-white rounded-xl px-3 max-w-2xl shadow-sm focus-within:ring-2 focus-within:ring-amber-300">
+                <svg className="w-4 h-4 text-slate-400 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <circle cx="11" cy="11" r="7" />
+                  <path strokeLinecap="round" d="m20 20-3.5-3.5" />
+                </svg>
                 <input
                   type="text"
-                  placeholder="Search crop (e.g. Tomato, Banana)..."
+                  aria-label="Search produce"
+                  placeholder="Search tomato, banana, onion…"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-emerald-500"
+                  className="flex-1 px-2.5 py-3 text-sm text-slate-900 placeholder-slate-400 outline-none bg-transparent"
                 />
-                <select
-                  value={sortBy}
-                  onChange={(e) => setSortBy(e.target.value)}
-                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-emerald-500"
-                >
-                  <option value="newest">Newest first</option>
-                  <option value="price_asc">Price: Low → High</option>
-                  <option value="price_desc">Price: High → Low</option>
-                  <option value="qty_desc">Highest stock</option>
-                </select>
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className="text-xs font-semibold text-slate-500 hover:text-slate-800 px-1"
+                  >
+                    Clear
+                  </button>
+                )}
               </div>
 
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs font-medium text-gray-500 mr-1">Grade:</span>
+              <p className="text-xs text-emerald-100/80 mt-3">
+                {userLoc
+                  ? 'Showing how far each listing is from you. Nothing is hidden by distance.'
+                  : 'Tap the 📍 button at the top to see how far each listing is from you.'}
+              </p>
+            </section>
+
+            {/* Filters */}
+            <div className="bg-white border border-slate-200 rounded-2xl p-3 sm:p-4 mb-5 flex flex-col lg:flex-row lg:items-center gap-3 lg:gap-6">
+              <div className="flex items-center gap-1.5 flex-wrap">
                 {['ALL', 'A', 'B', 'C'].map((g) => (
                   <button
                     key={g}
                     onClick={() => setGradeFilter(g)}
-                    className={`px-3 py-1 rounded-full text-xs font-semibold transition ${
+                    className={`px-3.5 py-1.5 rounded-full text-xs font-semibold border transition ${
                       gradeFilter === g
                         ? g === 'ALL'
-                          ? 'bg-emerald-700 text-white'
-                          : gradeColors[g]
-                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                          ? 'bg-emerald-800 text-white border-emerald-800'
+                          : `${gradeColors[g]} border-transparent`
+                        : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
                     }`}
                   >
-                    {g === 'ALL' ? 'All Grades' : `Grade ${g}`}
+                    {g === 'ALL' ? 'All grades' : `Grade ${g}`}
                   </button>
                 ))}
               </div>
 
-              <div className="flex flex-wrap items-center gap-2 pt-1 border-t">
-                <span className="text-xs font-medium text-gray-500 mr-1">I am ordering as:</span>
-                {[
-                  { value: 'INDIVIDUAL', label: 'Individual' },
-                  { value: 'KIRANA', label: 'Kirana Store' },
-                  { value: 'RESTAURANT', label: 'Restaurant' },
-                  { value: 'WHOLESALER', label: 'Wholesaler' },
-                ].map((b) => (
-                  <button
-                    key={b.value}
-                    onClick={() => setBuyerType(b.value)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
-                      buyerType === b.value
-                        ? 'bg-emerald-700 text-white'
-                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                    }`}
-                  >
-                    {b.label}
-                  </button>
-                ))}
+              <div className="flex items-center gap-2 lg:ml-auto flex-wrap">
+                <label className="text-xs text-slate-500" htmlFor="ff-buyer-type">Ordering as</label>
+                <select
+                  id="ff-buyer-type"
+                  value={buyerType}
+                  onChange={(e) => setBuyerType(e.target.value)}
+                  className="border border-slate-200 bg-white rounded-lg px-3 py-2 text-sm text-slate-800 outline-none focus:border-emerald-600"
+                >
+                  <option value="INDIVIDUAL">Individual</option>
+                  <option value="KIRANA">Kirana store</option>
+                  <option value="RESTAURANT">Restaurant</option>
+                  <option value="WHOLESALER">Wholesaler</option>
+                </select>
+                <label className="text-xs text-slate-500 ml-1" htmlFor="ff-sort">Sort</label>
+                <select
+                  id="ff-sort"
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value)}
+                  className="border border-slate-200 bg-white rounded-lg px-3 py-2 text-sm text-slate-800 outline-none focus:border-emerald-600"
+                >
+                  <option value="newest">Newest first</option>
+                  {userLoc && <option value="nearest">Nearest first</option>}
+                  <option value="price_asc">Price: low to high</option>
+                  <option value="price_desc">Price: high to low</option>
+                  <option value="qty_desc">Highest stock</option>
+                </select>
               </div>
             </div>
 
+            <p className="text-sm text-slate-600 mb-3">
+              {marketCount} {marketCount === 1 ? 'listing' : 'listings'}
+              {gradeFilter !== 'ALL' ? ` in Grade ${gradeFilter}` : ''}
+              {searchQuery.trim() ? ` for “${searchQuery.trim()}”` : ''}
+            </p>
+
             {/* Listings Grid */}
-            <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-5">
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
               {fpoListings.length === 0 && (
-                <p className="text-gray-500 text-sm col-span-full">No matching FPO listings found.</p>
+                <div className="col-span-full bg-white border border-dashed border-slate-300 rounded-2xl p-10 text-center">
+                  <p className="font-display text-lg font-semibold text-slate-800">No listings match yet</p>
+                  <p className="text-sm text-slate-500 mt-1">Try another crop name or switch to All grades.</p>
+                  {(searchQuery || gradeFilter !== 'ALL') && (
+                    <button
+                      onClick={() => {
+                        setSearchQuery('');
+                        setGradeFilter('ALL');
+                      }}
+                      className="mt-4 text-sm font-semibold text-emerald-800 hover:underline"
+                    >
+                      Clear search and filters
+                    </button>
+                  )}
+                </div>
               )}
 
-              {fpoListings.map((item) => (
-                <div
-                  key={item._id}
-                  onClick={() => navigate(`/listing/${item._id}`)}
-                  className="bg-white rounded-xl shadow-sm border overflow-hidden hover:shadow-md transition cursor-pointer"
-                >
-                  <div className="h-36 bg-gradient-to-br from-emerald-100 to-teal-50 flex items-center justify-center overflow-hidden relative">
-                    <span
-                      className={`absolute top-2 left-2 text-xs font-semibold px-2 py-1 rounded-full z-10 ${
-                        gradeColors[item.grade] || 'bg-slate-600 text-white'
-                      }`}
-                    >
-                      Grade {item.grade}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggleWishlist(item);
-                      }}
-                      title={isInWishlist(item._id) ? 'Remove from wishlist' : 'Save to wishlist'}
-                      className="absolute top-2 right-2 z-10 w-7 h-7 bg-white/90 hover:bg-white rounded-full flex items-center justify-center shadow-sm text-xs transition"
-                    >
-                      {isInWishlist(item._id) ? '❤️' : '🤍'}
-                    </button>
-                    {item.images?.[0] ? (
-                      <img
-                        src={
-                          item.images[0].startsWith('http')
-                            ? item.images[0]
-                            : `${(import.meta.env.VITE_API_URL || 'http://localhost:5000/api')
-                                .replace('/api', '')}/${item.images[0].replace(/^.*uploads/, 'uploads')}`
-                        }
-                        alt={item.produceType}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <span className="text-5xl">🌾</span>
-                    )}
-                  </div>
+              {fpoListings.map((item) => {
+                const soldOut = item.availableQuantityKg === 0;
+                const price = Number(item.pricePerKg);
+                return (
+                  <article
+                    key={item._id}
+                    onClick={() => navigate(`/listing/${item._id}`)}
+                    className="group bg-white rounded-2xl border border-slate-200 overflow-hidden hover:border-emerald-300 hover:shadow-lg hover:shadow-emerald-900/5 transition cursor-pointer flex flex-col"
+                  >
+                    <div className="relative aspect-[4/3] bg-emerald-50 flex items-center justify-center overflow-hidden">
+                      {item.images?.[0] ? (
+                        <img
+                          src={
+                            item.images[0].startsWith('http')
+                              ? item.images[0]
+                              : `${(import.meta.env.VITE_API_URL || 'http://localhost:5000/api')
+                                  .replace('/api', '')}/${item.images[0].replace(/^.*uploads/, 'uploads')}`
+                          }
+                          alt={item.produceType}
+                          loading="lazy"
+                          className="w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-300"
+                        />
+                      ) : (
+                        <span className="text-5xl">🌾</span>
+                      )}
 
-                  <div className="p-4">
-                    <h3 className="font-semibold text-gray-900">{item.produceType}</h3>
-                    <p className="text-xs text-gray-500 flex flex-wrap items-center gap-1">
-                      <span>{item.fpo?.name}</span>
-                      {item.fpo?.kycStatus === 'Verified' && (
-                        <span className="text-[10px] font-semibold bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded">
-                          Verified FPO
+                      <span
+                        className={`absolute top-2.5 left-2.5 text-[11px] font-semibold px-2.5 py-1 rounded-full ${
+                          gradeColors[item.grade] || 'bg-slate-600 text-white'
+                        }`}
+                      >
+                        Grade {item.grade}
+                      </span>
+
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleWishlist(item);
+                        }}
+                        aria-label={isInWishlist(item._id) ? 'Remove from wishlist' : 'Save to wishlist'}
+                        title={isInWishlist(item._id) ? 'Remove from wishlist' : 'Save to wishlist'}
+                        className="absolute top-2.5 right-2.5 w-8 h-8 bg-white/95 hover:bg-white rounded-full flex items-center justify-center shadow-sm text-sm transition"
+                      >
+                        {isInWishlist(item._id) ? '❤️' : '🤍'}
+                      </button>
+
+                      {item.distanceKm != null && (
+                        <span className="absolute bottom-2.5 left-2.5 text-[11px] font-semibold bg-white/95 text-emerald-800 px-2.5 py-1 rounded-full shadow-sm">
+                          📍 {item.distanceKm} km away
                         </span>
                       )}
-                    </p>
-                    <p className="text-green-700 font-bold mt-1">
-                      ₹{Number(item.pricePerKg).toFixed(2)}
-                      <span className="text-xs font-normal text-gray-500">/kg</span>
-                    </p>
-                    <p className="text-xs text-gray-500 mb-1">
-                      {item.availableQuantityKg}kg available · Min {item.minOrderQtyKg}kg
-                    </p>
-                    {item.description && (
-                      <p className="text-xs text-gray-400 mb-2 line-clamp-2">{item.description}</p>
-                    )}
-
-                    <div className="flex gap-1.5 mt-2" onClick={(e) => e.stopPropagation()}>
-                      <input
-                        type="number"
-                        placeholder="kg"
-                        value={fpoQuantities[item._id] || ''}
-                        onChange={(e) =>
-                          setFpoQuantities({ ...fpoQuantities, [item._id]: e.target.value })
-                        }
-                        className="w-16 border border-gray-300 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-emerald-500"
-                        min={item.minOrderQtyKg}
-                        max={item.availableQuantityKg}
-                        step={buyerType === 'INDIVIDUAL' ? 1 : 5}
-                      />
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          const q = Number(fpoQuantities[item._id]) || item.minOrderQtyKg || 1;
-                          addToCart(item, q, buyerType);
-                        }}
-                        disabled={item.availableQuantityKg === 0}
-                        className="flex-1 bg-emerald-700 text-white text-xs py-1.5 rounded-lg hover:bg-emerald-800 disabled:bg-gray-300 transition font-medium flex items-center justify-center gap-1"
-                      >
-                        <span>🛒</span> Add
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handlePlaceFpoOrder(item);
-                        }}
-                        disabled={item.availableQuantityKg === 0}
-                        className="bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200 text-xs px-2.5 py-1.5 rounded-lg disabled:opacity-40 transition font-medium"
-                      >
-                        Buy
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openSubscriptionModal(item, 'FPO');
-                        }}
-                        disabled={item.availableQuantityKg === 0}
-                        className="bg-amber-50 text-amber-900 hover:bg-amber-100 border border-amber-200 text-[11px] px-2 py-1.5 rounded-lg transition font-semibold flex items-center gap-0.5"
-                        title="Subscribe & Save 5% with recurring delivery"
-                      >
-                        <span>🔁</span> Sub
-                      </button>
+                      {item.outsideDeliveryArea && (
+                        <span
+                          className="absolute bottom-2.5 right-2.5 text-[11px] font-semibold bg-amber-100 text-amber-900 px-2.5 py-1 rounded-full shadow-sm"
+                          title={`This FPO usually delivers within ${item.deliveryRadiusKm} km`}
+                        >
+                          Beyond usual delivery area
+                        </span>
+                      )}
                     </div>
-                  </div>
-                </div>
-              ))}
+
+                    <div className="p-4 flex flex-col flex-1">
+                      <div className="flex items-start justify-between gap-3">
+                        <h3 className="font-display text-base font-semibold text-slate-900 leading-snug">
+                          {item.produceType}
+                        </h3>
+                        <p className="text-right shrink-0">
+                          <span className="text-lg font-bold text-emerald-800">
+                            ₹{price % 1 === 0 ? price : price.toFixed(2)}
+                          </span>
+                          <span className="text-xs text-slate-500">/kg</span>
+                        </p>
+                      </div>
+
+                      <p className="text-xs text-slate-500 mt-0.5 flex flex-wrap items-center gap-1.5">
+                        <span>{item.fpo?.name}</span>
+                        {item.fpo?.kycStatus === 'Verified' && (
+                          <span className="text-[10px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200 px-1.5 py-0.5 rounded">
+                            ✓ Verified FPO
+                          </span>
+                        )}
+                      </p>
+
+                      <p className="text-xs text-slate-600 mt-2.5">
+                        <span className={soldOut ? 'text-rose-600 font-semibold' : 'font-semibold'}>
+                          {soldOut ? 'Sold out' : `${item.availableQuantityKg} kg in stock`}
+                        </span>
+                        <span className="text-slate-400"> · </span>
+                        Minimum order {item.minOrderQtyKg} kg
+                      </p>
+
+                      {item.description && (
+                        <p className="text-xs text-slate-500 mt-1.5 line-clamp-2">{item.description}</p>
+                      )}
+
+                      <div className="mt-auto pt-4 space-y-2" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex gap-2">
+                          <input
+                            type="number"
+                            aria-label={`Quantity in kg for ${item.produceType}`}
+                            placeholder="kg"
+                            value={fpoQuantities[item._id] || ''}
+                            onChange={(e) =>
+                              setFpoQuantities({ ...fpoQuantities, [item._id]: e.target.value })
+                            }
+                            className="w-20 border border-slate-200 rounded-lg px-2.5 py-2 text-sm outline-none focus:border-emerald-600"
+                            min={item.minOrderQtyKg}
+                            max={item.availableQuantityKg}
+                            step={buyerType === 'INDIVIDUAL' ? 1 : 5}
+                          />
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const q = Number(fpoQuantities[item._id]) || item.minOrderQtyKg || 1;
+                              addToCart(item, q, buyerType);
+                            }}
+                            disabled={soldOut}
+                            className="flex-1 bg-emerald-700 text-white text-sm py-2 rounded-lg hover:bg-emerald-800 disabled:bg-slate-300 transition font-semibold flex items-center justify-center gap-1.5"
+                          >
+                            <span>🛒</span> Add to cart
+                          </button>
+                        </div>
+
+                        <div className="flex gap-2">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handlePlaceFpoOrder(item);
+                            }}
+                            disabled={soldOut}
+                            className="flex-1 border border-emerald-700 text-emerald-800 hover:bg-emerald-50 text-sm py-1.5 rounded-lg disabled:opacity-40 transition font-semibold"
+                          >
+                            Buy now
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openSubscriptionModal(item, 'FPO');
+                            }}
+                            disabled={soldOut}
+                            className="flex-1 border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 text-sm py-1.5 rounded-lg disabled:opacity-40 transition font-semibold"
+                            title="Subscribe and save 5% with recurring delivery"
+                          >
+                            🔁 Subscribe
+                          </button>
+                          <ShareListingButton
+                            listingId={item._id}
+                            produceType={item.produceType}
+                            pricePerKg={item.pricePerKg}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
             </div>
           </div>
         )}

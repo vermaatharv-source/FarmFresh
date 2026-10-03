@@ -65,6 +65,7 @@ const subscriptionRoutes = require('./routes/subscriptionRoutes');
 const securityRoutes = require('./routes/securityRoutes');
 const fpoOperationsRoutes = require('./routes/fpoOperationsRoutes');
 const complianceRoutes = require('./routes/complianceRoutes');
+const growthRoutes = require('./routes/growthRoutes');
 
 // Import eNAM sync service functions
 const { syncAgmarknetPrices, initPriceSyncScheduler } = require('./services/enamSyncService');
@@ -134,7 +135,8 @@ app.use('/api/reviews', reviewRoutes); // Product Reviews & Ratings
 app.use('/api/subscriptions', subscriptionRoutes); // Recurring Subscriptions (Subscribe & Save)
 app.use('/api/security', securityRoutes);
 app.use('/api/fpo-operations', fpoOperationsRoutes); // Admin-only audit blockchain verification
-app.use('/api/compliance', complianceRoutes); // FPO statutory & governance compliance checklist
+app.use('/api/compliance', complianceRoutes);
+app.use('/api/growth', growthRoutes); // Referral, coupons, geo, wallet, demand signals // FPO statutory & governance compliance checklist
 app.use('/api/translate', translateRoutes);
 // Health check endpoint
 app.get('/', (req, res) => {
@@ -193,6 +195,17 @@ mongoose
   .catch((err) => console.error('MongoDB connection error:', err));
 
 const PORT = process.env.PORT || 5000;
+
+// Seed default growth coupons (WELCOME50, FRESH10) – idempotent
+try {
+  const growthService = require('./services/growthService');
+  growthService.seedDefaultCoupons()
+    .then(() => console.log('[growth] Default coupons ready'))
+    .catch((e) => console.warn('[growth] Coupon seed:', e.message));
+} catch (e) {
+  console.warn('[growth] seed skipped', e.message);
+}
+
 const server = app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 
 const shutdown = async (signal) => {

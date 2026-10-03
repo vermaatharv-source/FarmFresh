@@ -11,6 +11,8 @@ import LanguageSwitcher from '../components/LanguageSwitcher';
 import { useLanguage } from '../context/LanguageContext';
 import { FpoPaymentReport } from '../components/dashboard/PaymentReports';
 import FpoOperationsCenter from '../components/dashboard/FpoOperationsCenter';
+import BuyersDemandPanel from '../components/dashboard/BuyersDemandPanel';
+import FpoLocationCard from '../components/dashboard/FpoLocationCard';
 
 const NAV = [
   { id: 'analytics', label: 'Overview', icon: '📊' },
@@ -20,6 +22,7 @@ const NAV = [
   { id: 'inventory', label: 'Inventory', icon: '🏬' },
   { id: 'listings', label: 'Listings', icon: '🏷️' },
   { id: 'orders', label: 'Orders', icon: '📦' },
+  { id: 'buyers', label: 'Buyers & Demand', icon: '🛒' },
   { id: 'payouts', label: 'Payouts', icon: '💰' },
   { id: 'earnings', label: 'Marketplace Earnings', icon: '💵' },
   { id: 'reports', label: 'Reports', icon: '📑' },
@@ -537,7 +540,7 @@ export default function FpoDashboard() {
 
   return (
     <AutoTranslate>
-      <div className="h-screen flex overflow-hidden bg-slate-50">
+      <div className="relative h-screen flex overflow-hidden bg-slate-50">
         {/* Sidebar */}
         <aside className="w-64 h-full bg-slate-900 text-slate-100 flex flex-col shrink-0 overflow-hidden shadow-xl border-r border-slate-800">
           <div className="px-5 py-5 border-b border-slate-800/80 bg-slate-950/40">
@@ -673,6 +676,8 @@ export default function FpoDashboard() {
 
             {/* OVERVIEW */}
             {activeTab === 'operations' && <FpoOperationsCenter onNavigateTab={setActiveTab} />}
+
+            {activeTab === 'buyers' && <BuyersDemandPanel />}
 
             {activeTab === 'analytics' && (
               <FpoOverview
@@ -1906,6 +1911,11 @@ export default function FpoDashboard() {
             {/* PROFILE & KYC */}
             {activeTab === 'settings' && fpoProfile && (
               <div className="grid lg:grid-cols-2 gap-6">
+                {user?.role === 'fpo_admin' && (
+                  <div className="lg:col-span-2">
+                    <FpoLocationCard profile={fpoProfile} onSaved={loadProfile} />
+                  </div>
+                )}
                 <div className="bg-white border border-slate-200/90 rounded-2xl p-6 shadow-sm space-y-4">
                   <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                     <h3 className="font-bold text-slate-900 text-base">FPO Organisation Profile</h3>

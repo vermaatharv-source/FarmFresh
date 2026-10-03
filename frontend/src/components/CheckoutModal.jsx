@@ -40,10 +40,27 @@ export default function CheckoutModal() {
 
   // Coupon state
 
+  // Soft delivery-area warning (never blocks the order)
+  const [areaWarnings, setAreaWarnings] = useState([]);
+
   // Processing & Confirmation state
   const [submitting, setSubmitting] = useState(false);
   const [checkoutError, setCheckoutError] = useState('');
   const [completedOrder, setCompletedOrder] = useState(null);
+
+  useEffect(() => {
+    if (!isCheckoutOpen) return;
+    const lat = parseFloat(localStorage.getItem('ff_user_lat'));
+    const lng = parseFloat(localStorage.getItem('ff_user_lng'));
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || !cart.length) {
+      setAreaWarnings([]);
+      return;
+    }
+    API.post('/growth/delivery-check', { lat, lng, listingIds: cart.map((i) => i.id) })
+      .then((res) => setAreaWarnings((res.data?.data || []).filter((r) => r.outside)))
+      .catch(() => setAreaWarnings([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCheckoutOpen]);
 
   useEffect(() => {
     if (isCheckoutOpen) {
@@ -293,6 +310,17 @@ export default function CheckoutModal() {
             {checkoutError && (
               <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-2.5 rounded-lg text-xs">
                 {checkoutError}
+              </div>
+            )}
+
+            {areaWarnings.length > 0 && (
+              <div className="bg-amber-50 border border-amber-200 text-amber-900 px-4 py-2.5 rounded-lg text-xs space-y-1">
+                <p className="font-semibold">Some items are beyond the usual delivery area</p>
+                {areaWarnings.map((w) => (
+                  <p key={w.listingId}>
+                    {w.produceType} from {w.fpoName || 'this FPO'} is about {w.distanceKm} km away; the FPO usually delivers within {w.radiusKm} km. Delivery may take longer. You can still place the order.
+                  </p>
+                ))}
               </div>
             )}
 
